@@ -1,0 +1,37 @@
+services:
+  morning-mailer:
+    build:
+      context: .
+    image: morning-mailer
+    container_name: morning-mailer-huey
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    networks:
+      - app-network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./modules:/app/modules
+      - ./tasks.py:/app/tasks.py
+      - ./gauth:/app/gauth
+    command: uv run huey_consumer tasks.huey -k thread -w 2 --flush-locks info
+    healthcheck:
+      test: [
+        "CMD-SHELL",
+        "python -c \"import os,sys; import redis; r=redis.Redis.from_url(os.getenv('REDIS_URL')); sys.exit(0 if r.ping() else 1)\""
+      ]
+      interval: 3m
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  redis-data:

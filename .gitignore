@@ -1,0 +1,29 @@
+.env
+.idea
+.venv
+.tok
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Testing & Type checking
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# OAuth/Credentials (sensitive)
+gauth/token.json
+gauth/client_secret.json
+
+# OS
+.DS_Store
+Thumbs.db
