@@ -12,7 +12,7 @@ load_dotenv()
 logger = get_logger("[agent]", show_time=True)
 
 
-class MCPAgentModule:
+class AgentModule:
     def __init__(self):
         self.llm = None
 
@@ -26,7 +26,8 @@ class MCPAgentModule:
         temperature = model_temperature if model_temperature is not None else float(os.getenv("MODEL_TEMPERATURE", 0.4))
         tokens = max_tokens or int(os.getenv("MAX_TOKENS", 1500))
 
-        logger.info(f"Initializing LLM: {provider} (temp: {temperature}, tokens: {tokens})")
+        env_mode = os.getenv("ENV_MODE", "dev").upper()
+        logger.info(f"Initializing LLM: {provider} (temp: {temperature}, tokens: {tokens}) | ENV_MODE: {env_mode}")
         self.llm = create_llm(
             model_provider=provider,
             model_temperature=temperature,

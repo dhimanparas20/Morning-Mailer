@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Morning Mailer is an AI-powered email summarization system that automatically fetches emails from Gmail at scheduled times, generates concise HTML summaries using Large Language Models, and emails them to the user.
+Morning Mailer is an AI-powered **multi-user** email summarization system that automatically fetches emails from multiple Gmail accounts at scheduled times, generates beautiful HTML summaries using Large Language Models, and emails them to each user.
 
 ## Architecture
 
@@ -11,180 +11,216 @@ Morning Mailer is an AI-powered email summarization system that automatically fe
 │  Gmail API     │────▶│ Huey Worker  │────▶│  LLM (NVIDIA/
 │  (Email Fetch) │     │ (Scheduler)  │     │  OpenAI/    │
 └─────────────────┘     └──────────────┘     │  Groq)       │
-                                              └─────────────┘
-         │                      │
-         │              ┌──────┴──────┐
-         │              │   Redis      │
-         │              │ (Upstash)    │
-         │              └─────────────┘
-         ▼
-   ┌──────────────────────────────────────┐
-   │         Email Summary Output          │
-   │  - HTML formatted with dark theme    │
-   │  - Sent via SMTP to MY_EMAIL         │
-   └──────────────────────────────────────┘
+          │                      │              └─────────────┘
+          │              ┌──────┴──────┐
+          │              │   Redis      │
+          │              │ (Upstash)   │
+          │              └─────────────┘
+          ▼
+    ┌──────────────────────────────────────┐
+    │         Email Summary Output         │
+    │  - Simple, sober HTML summaries       │
+    │  - Per-user scheduling                │
+    │  - Color-coded sections              │
+    │  - Sent via SMTP to each user        │
+    └──────────────────────────────────────┘
 ```
+
+## Key Features
+
+1. **Multi-User Support**: Multiple users with separate Gmail accounts
+2. **Per-User Scheduling**: Each user can have their own schedule_time
+3. **Parallel Processing**: Users processed concurrently with ThreadPoolExecutor
+4. **Smart Fallbacks**: Global defaults when per-user settings not specified
+5. **Token Management**: Single OAuth credentials + multiple tokens
+6. **DEV/PROD Mode**: DEV = run multiple times/day, PROD = run once/day
 
 ## Core Components
 
-### 1. tasks.py - Task Scheduler
-- **Purpose**: Main entry point for scheduled email fetching, summarization, and sending
+### 1. tasks.py - Task Scheduler & Main Logic
+- **Purpose**: Orchestrates email fetching, summarization, and sending for all users
 - **Key Functions**:
-  - `get_job_status(job_id)`: Check status of a Huey job by ID
-  - `fetch_emails_with_retry()`: Fetches emails with configurable retry logic
-  - `summarize_emails(emails)`: Uses LLM to summarize fetched emails
-  - `send_email(to, subject, body, is_html)`: Sends email via SMTP
-  - `daily_email_summary()`: Huey periodic task - runs at SCHEDULE_TIME
-  - `send_email_task()`: Huey task for async email sending
+  - `load_users()`: Loads active users from users.json with .env fallback
+  - `get_user_settings(user)`: Gets per-user max_email_results & days_threshold
+  - `should_run_today(user, global_schedule_time)`: Checks if user's schedule time has passed today
+  - `get_user_last_run_date(keyword)`: Gets last processed date from Redis
+  - `set_user_last_run_date(keyword, date_str)`: Updates last processed date in Redis
+  - `fetch_emails_with_retry(keyword, max_results, days_threshold)`: Fetches with per-user settings
+  - `process_user(user, global_schedule_time)`: Full pipeline for one user
+  - `send_email(to, subject, body, is_html, smtp_user, smtp_password)`: Sends via SMTP
+  - `daily_email_summary()`: Huey periodic task - runs every SCHEDULE_CHECK_INTERVAL minutes
 
-- **Configuration (from .env)**:
-  - `RETRY_COUNT`: Number of retry attempts (default: 3)
-  - `RETRY_DELAY`: Seconds between retries (default: 60)
-  - `MAX_EMAIL_RESULTS`: Max emails to fetch (default: 10)
-  - `SCHEDULE_TIME`: Daily run time in HH:MM (default: 08:00)
-  - `DAYS_THRESHOLD`: Days to look back (default: 1)
-  - `MY_EMAIL`: Recipient email for summary
-  - `EMAIL_HOST_USER`: SMTP username
-  - `EMAIL_HOST_PASSWORD`: SMTP password (app password)
+- **Scheduling Logic**:
+  - Task runs every N minutes (SCHEDULE_CHECK_INTERVAL, default: 5)
+  - For each user, checks if current time >= user's schedule_time
+  - Tracks processed users in Redis (key: `morning_mailer:last_run:<keyword>`)
+  - Only processes users who haven't run today and whose time has passed
 
 ### 2. modules/fetch_emails.py - Gmail Integration
 - **Purpose**: Handles all Gmail API interactions
 - **Key Functions**:
-  - `get_gmail_service()`: Initializes Gmail API client with OAuth
-  - `fetch_emails()`: Main API to retrieve emails with filtering
-  - `parse_date()`: Parses various email date formats
-  - `clean_text()`: Sanitizes email content
-  - `extract_plain_text()`: Extracts text from email body
+  - `get_gmail_service(keyword)`: Initializes Gmail API client with OAuth (per keyword)
+  - `fetch_emails(keyword, max_results, query, date_from, date_to, ...)`: Main API
+  - `get_token_path(keyword)`: Returns path to token_<keyword>.json
+  - `get_credentials_path()`: Returns path to client_secret.json (shared)
+  - `load_users()`: Loads users from users.json
+  - `parse_date()`, `clean_text()`, `extract_plain_text()`: Utilities
 
-- **OAuth Flow**:
-  1. Checks for existing token in `gauth/token.json`
-  2. If valid, uses it directly
-  3. If expired, attempts refresh
-  4. If no valid token, requires `gauth/client_secret.json`
+- **OAuth Structure** (SINGLE SECRET, MULTIPLE TOKENS):
+  ```
+  gauth/
+  ├── client_secret.json         ← Desktop OAuth app (legacy)
+  ├── client_secret_web.json     ← Web OAuth app (recommended)
+  └── tokens/
+      ├── token_dhimanparas20.json  ← User 1's token
+      ├── token_bobyHP07.json        ← User 2's token
+      └── token_lgtvmistanbul.json   ← User 3's token
+  ```
 
-- **Email Filtering**:
-  - `date_from`: ISO datetime string
-  - `date_to`: ISO datetime string
-  - `sender`: Filter by sender email
-  - `query`: Raw Gmail search query
-  - `has_attachments`: Boolean filter
+- **Parallel Fetching**: Uses ThreadPoolExecutor for thread-safe email fetching
+
+### 2.1 modules/web_auth.py - Web OAuth Setup
+- **Purpose**: Alternative OAuth using web app credentials with local callback server
+- **Key Features**:
+  - Starts local HTTP server to handle OAuth callback
+  - Opens browser automatically for authentication
+  - Works with Web OAuth credentials (client_secret_web.json)
+  - Falls back to desktop credentials if web not available
+- **Usage**:
+  ```bash
+  uv run python -m modules.web_auth <keyword>
+  # or in IPython:
+  %setup_web_oauth <keyword>
+  ```
 
 ### 3. modules/agent_mod.py - LLM Integration
 - **Purpose**: Wrapper for LLM summarization
 - **Key Functions**:
-  - `init()`: Initializes LLM from config
-  - `summarize_emails(emails, prompt)`: Generates summary
+  - `init()`: Initializes LLM from config (MODEL_PROVIDER)
+  - `summarize_emails(emails, prompt)`: Generates HTML summary
 
-- **Supported Providers**:
-  - `nvidia` (default): NVIDIA NIM endpoints
-  - `openai`: OpenAI models
-  - `groq`: Groq models
-  - `openrouter`: OpenRouter aggregation
-  - `google`: Google Gemini
+- **Supported Providers**: nvidia, openai, groq, openrouter, google
 
-### 4. modules/prompt.py - Summarization Prompt
-- **Purpose**: Defines how LLM should summarize emails (outputs HTML)
-- **Categories**:
-  - Critical: Payment failures, security alerts, deployment issues
-  - Important: Project updates, service warnings, notifications
-  - Informational: Status updates, digests
-  - Ignored: Marketing, promotions, newsletters
-- **Output**: Dark-themed HTML with inline CSS for email compatibility
+### 4. modules/prompt.py - Simple HTML Template
+- **Purpose**: Defines LLM output format (simple, sober HTML)
+- **Features**:
+  - Clean, minimal layout with inline CSS
+  - Light gray background (#f5f5f5)
+  - Color-coded sections (red=critical, green=important, blue=info)
+  - Simple table structure for fast AI generation
+  - Minimal token usage for cost efficiency
 
-### 5. modules/agent_utils.py - LLM Factory
-- **Purpose**: Creates LLM instances dynamically
-- **Function**: `create_llm()` - Factory function supporting multiple providers
-- **Model Registry**: Maps provider names to LangChain classes
-
-### 6. modules/logger.py - Logging
-- **Purpose**: Consistent logging across application
-- **Features**: Colored output, timestamps, structured logging
-
-### 7. modules/generics.py - Utility Functions
-- `get_timestamp()`: Unix epoch timestamp
-- `format_timestamp()`: Convert to human-readable HH:MM:SS DD:MM:YYYY
-- `parse_datetime()`: ISO string to timestamp
-- `utc_to_local()`: Convert UTC to local timezone
-
-### 8. modules/ipython_startup.py - IPython Magic Functions
-- **Purpose**: Custom IPython commands for easy testing
-- **Magic Functions**:
-  - `%daily_email_summary`: Enqueue the daily email fetch task
-  - `%check_job_status <job_id>`: Check status of a Huey job
-  - `%cls`: Clear the terminal screen
-  - `%autoreload 2`: Auto-reload changed modules
+### 5. modules/ipython_startup.py - Magic Functions
+- **Available Magic Functions**:
+  - `%daily_email_summary`: Trigger the task
+  - `%check_job_status <job_id>`: Check Huey job
+  - `%setup_oauth <keyword>`: Generate new token
+  - `%check_tokens`: Show token status for all users
+  - `%send_test_email <subject> <body>`: Test SMTP
+  - `%redis_status`: Check Redis connection
+  - `%cls`: Clear terminal
 
 ## Data Flow
 
 ```
-1. Huey scheduler triggers at SCHEDULE_TIME
-          │
-          ▼
+1. Huey scheduler triggers every SCHEDULE_CHECK_INTERVAL minutes
+           │
+           ▼
 2. daily_email_summary() called
-          │
-          ▼
-3. fetch_emails_with_retry():
-   - Calculate date_from = now - DAYS_THRESHOLD
-   - date_to = now
-   - Call fetch_emails() with date filters
-   - Retry up to RETRY_COUNT times on failure
-          │
-          ▼
-4. fetch_emails():
-   - Get Gmail service (handle OAuth)
-   - List messages with query
-   - Get each message detail (full format)
-   - Filter by date range
-   - Return: {success, count, emails[], filters_applied}
-          │
-          ▼
-5. summarize_emails(emails):
-   - Use pre-initialized MCPAgentModule
-   - Call agent.summarize_emails(emails, SYSTEM_PROMPT)
-          │
-          ▼
-6. agent.summarize_emails():
-   - Build prompt with SYSTEM_PROMPT + email JSON
-   - Invoke LLM with HumanMessage
-   - Return: formatted HTML summary string
-          │
-          ▼
-7. Print summary to console
-          │
-          ▼
-8. send_email_task():
-   - Async task to send email via SMTP
-   - Uses EMAIL_HOST_USER/PASSWORD credentials
-   - Sends HTML to MY_EMAIL
-          │
-          ▼
-9. Return status: {date, time, emails_fetched, emails_summarized}
+           │
+           ▼
+3. For each active user in users.json:
+    ├── Check if current time >= user's schedule_time
+    ├── Check ENV_MODE:
+    │    ├── dev: skip last_run check → always eligible
+    │    └── prod: check Redis (key: morning_mailer:last_run:<keyword>)
+    └── If eligible → add to eligible_users
+           │
+           ▼
+4. Eligible users processed in parallel (ThreadPoolExecutor)
+           │
+           ▼
+5. For each eligible user:
+    ├── fetch_emails_with_retry(keyword, user_max_results, user_days_threshold)
+    │    - Uses user's max_email_results (or global default)
+    │    - Uses user's days_threshold (or global default)
+    ├── summarize_emails(emails)
+    ├── send_email(to=user_email, smtp_host=user_smtp)
+    └── set_user_last_run_date(keyword, today)
+           │
+           ▼
+6. Return: {date, time, eligible_users, processed, total_emails_fetched, results}
 ```
 
 ## File Structure
 
 ```
 Morning-Mailer/
-├── tasks.py              # Huey task scheduler & main logic
+├── tasks.py                    # Main scheduler (per-user scheduling)
 ├── modules/
-│   ├── __init__.py       # Module exports
-│   ├── fetch_emails.py   # Gmail API integration
-│   ├── agent_mod.py      # LLM summarization wrapper
-│   ├── agent_utils.py     # LLM factory function
-│   ├── prompt.py         # SYSTEM_PROMPT for summarization
-│   ├── logger.py         # Logging utilities
-│   ├── generics.py       # Utility functions
-│   ├── ipython_startup.py # IPython magic functions
-│   └── ipython_config.py  # IPython configuration
+│   ├── fetch_emails.py         # Gmail API (keyword-based tokens)
+│   ├── agent_mod.py            # LLM wrapper
+│   ├── agent_utils.py          # LLM factory
+│   ├── prompt.py               # Simple HTML template
+│   ├── logger.py              # Logging
+│   ├── generics.py            # Utilities
+│   └── ipython_startup.py     # IPython magic functions
 ├── gauth/
-│   ├── client_secret.json # OAuth credentials (your config)
-│   └── token.json          # OAuth token (auto-generated)
-├── .env                   # Environment variables
-├── Dockerfile             # Container image definition
-├── compose.yml            # Docker Compose orchestration
-├── pyproject.toml         # Python dependencies
-└── uv.lock                # Locked dependencies
+│   ├── client_secret.json      # Single OAuth credentials (shared)
+│   └── tokens/                 # One token per user
+│       ├── token_<keyword>.json
+│       └── ...
+├── users.json                  # Multi-user configuration
+├── users.json.sample           # User template
+├── .env                        # Global settings
+├── .env.sample                 # Environment template
+├── oauth_setup.sh              # OAuth setup script
+├── compose.yml                 # Docker orchestration
+└── pyproject.toml              # Dependencies
 ```
+
+## Multi-User Support
+
+### users.json Schema
+
+```json
+[
+  {
+    "name": "Paras",
+    "email": "dhimanparas20@gmail.com",
+    "keyword": "dhimanparas20",
+    "active": true,
+    "max_email_results": 20,      // optional, falls back to .env
+    "days_threshold": 2,            // optional, falls back to .env
+    "schedule_time": "08:00",       // optional, falls back to .env SCHEDULE_TIME
+    "smtp_host_user": "user@gmail.com",   // optional, falls back to .env
+    "smtp_host_password": "xxxx"           // optional, falls back to .env
+  }
+]
+```
+
+### Per-User Fields:
+| Field | Required | Default | Description |
+|-------|----------|---------|--------------|
+| `name` | Yes | - | Display name |
+| `email` | Yes | - | Where to send summary |
+| `keyword` | Yes | - | Links to token_<keyword>.json |
+| `active` | No | true | If false, user is skipped |
+| `max_email_results` | No | .env MAX_EMAIL_RESULTS | Max emails to fetch |
+| `days_threshold` | No | .env DAYS_THRESHOLD | Days to look back |
+| `schedule_time` | No | .env SCHEDULE_TIME | When to run (HH:MM) |
+| `smtp_host_user` | No | .env EMAIL_HOST_USER | Custom SMTP sender |
+| `smtp_host_password` | No | .env EMAIL_HOST_PASSWORD | Custom SMTP password |
+
+### Scheduling Logic:
+- Task runs every SCHEDULE_CHECK_INTERVAL minutes (default: 5)
+- At each run, checks each user:
+  - If current time >= user's schedule_time (or global SCHEDULE_TIME)
+  - If ENV_MODE=dev: always run (skip last_run check)
+  - If ENV_MODE=prod: only if hasn't run today (tracked in Redis)
+  - THEN process that user in parallel
+- Each user runs once per day in PROD mode, multiple times in DEV mode
+- Users without schedule_time use global SCHEDULE_TIME from .env
 
 ## Key Configuration
 
@@ -192,97 +228,124 @@ Morning-Mailer/
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `MODEL_PROVIDER` | LLM provider (nvidia/openai/groq/openrouter/google) | nvidia |
-| `NVIDIA_MODEL` | Model for NVIDIA | qwen/qwen3-next-80b-a3b-instruct |
-| `OPENAI_MODEL` | Model for OpenAI | gpt-4o-mini |
-| `MODEL_TEMPERATURE` | LLM creativity | 0.4 |
-| `MAX_TOKENS` | Max response length | 2500 |
+| `MODEL_PROVIDER` | LLM provider (nvidia/openai/groq/openrouter/google) | openrouter |
+| `OPENAI_MODEL` | Model for OpenAI | gpt-4.1-nano |
+| `MODEL_TEMPERATURE` | LLM creativity | 0.5 |
+| `MAX_TOKENS` | Max response length | 10500 |
 | `REDIS_URL` | Upstash Redis connection string | (your URL) |
-| `SCHEDULE_TIME` | Daily run time | 08:00 |
-| `DAYS_THRESHOLD` | Look back period | 2 |
-| `MAX_EMAIL_RESULTS` | Max emails to fetch | 10 |
-| `RETRY_COUNT` | Retry attempts | 3 |
+| `SCHEDULE_TIME` | Default run time (when user has no schedule_time) | 08:00 |
+| `DAYS_THRESHOLD` | Default look back period | 2 |
+| `MAX_EMAIL_RESULTS` | Default max emails to fetch | 20 |
+| `MAX_THREAD_WORKERS` | Parallel users/processes | 5 |
+| `SCHEDULE_CHECK_INTERVAL` | Minutes between scheduler checks | 5 |
+| `RETRY_COUNT` | Retry attempts on failure | 2 |
 | `RETRY_DELAY` | Seconds between retries | 60 |
-| `MY_EMAIL` | Recipient for daily summary | (your email) |
-| `EMAIL_HOST_USER` | SMTP username | (your email) |
-| `EMAIL_HOST_PASSWORD` | SMTP app password | (app password) |
+| `ENV_MODE` | dev = run multiple times, prod = run once/day | dev |
+| `EMAIL_HOST_USER` | Fallback SMTP username | (your email) |
+| `EMAIL_HOST_PASSWORD` | Fallback SMTP password | (app password) |
+| `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth (e.g., ngrok tunnel) | - |
 
-## Huey Task Scheduling
+## Token Setup
 
-```python
-# Daily at specific time
-@huey.periodic_task(crontab(hour=8, minute=0))
+### First-Time OAuth (for the first user):
+```bash
+# Option A: Using setup script
+./oauth_setup.sh
 
-# Every 2 minutes (for testing)
-@huey.periodic_task(crontab(minute='*/2'))
+# Option B: Using Python
+uv run python -c "from modules.fetch_emails import get_gmail_service; get_gmail_service()"
 
-# Every hour
-@huey.periodic_task(crontab(hour='*'))
+# Option C: Using IPython magic
+%setup_oauth default
 ```
+
+### Adding New User Tokens:
+When you add a new user to users.json with a new keyword, you must generate their token:
+
+```bash
+# Using CLI
+uv run python -m modules.fetch_emails setup <keyword>
+
+# Examples:
+uv run python -m modules.fetch_emails setup work
+uv run python -m modules.fetch_emails setup bobyHP07
+uv run python -m modules.fetch_emails setup myname
+
+# Using IPython
+%setup_oauth work
+```
+
+### Checking Token Status:
+```bash
+# CLI
+uv run python -m modules.fetch_emails check
+
+# IPython
+%check_tokens
+```
+
+This will show which users have tokens and which need OAuth setup.
 
 ## IPython Magic Functions
 
-When running `uv run ipython` inside the container, you have access to:
+In IPython (`docker compose exec huey uv run ipython`):
 
 | Magic | Usage | Description |
 |-------|-------|-------------|
-| `%daily_email_summary` | `%daily_email_summary` | Enqueue the daily email fetch task |
-| `%check_job_status` | `%check_job_status <job_id>` | Check job status by ID |
-| `%cls` | `%cls` | Clear terminal screen |
-| `%autoreload` | `%autoreload 2` | Auto-reload changed modules |
+| `%daily_email_summary` | `%daily_email_summary` | Trigger the scheduled task |
+| `%check_job_status` | `%check_job_status <job_id>` | Check Huey job status |
+| `%setup_oauth` | `%setup_oauth <keyword>` | Generate new token (desktop) |
+| `%setup_web_oauth` | `%setup_web_oauth <keyword>` | Generate new token (web app) |
+| `%check_tokens` | `%check_tokens` | Show all users' token status |
+| `%send_test_email` | `%send_test_email <subject> <body>` | Send test email |
+| `%redis_status` | `%redis_status` | Check Redis connection |
+| `%clear_last_run` | `%clear_last_run [keyword\|all]` | Clear last run date (use in DEV mode) |
+| `%run_fetch` | `%run_fetch` | Direct fetch (no Huey) |
+| `%cls` | `%cls` | Clear terminal |
+
+## Common Tasks
+
+### Manual Trigger:
+```bash
+docker compose exec huey python -c "from tasks import daily_email_summary; daily_email_summary()"
+```
+
+### Check Logs:
+```bash
+docker compose logs -f huey
+```
+
+### Rebuild Container:
+```bash
+docker compose build --no-cache && docker compose up -d
+```
+
+### Test Fetch for Specific User:
+```python
+from tasks import fetch_emails_with_retry
+result = fetch_emails_with_retry("dhimanparas20", 20, 2)
+print(result['count'], "emails")
+```
+
+### Test Send Email:
+```python
+from tasks import send_email
+send_email("test@example.com", "Test Subject", "Hello!")
+```
 
 ## Adding New Features
 
 ### To add a new LLM provider:
 1. Add entry to `MODEL_REGISTRY` in `modules/agent_utils.py`
-2. Ensure langchain package is in `pyproject.toml`
-3. Update `.env` with provider API key
+2. Ensure langchain package in `pyproject.toml`
+3. Add API key to `.env`
 
-### To modify email filtering:
-- Edit `fetch_emails()` in `modules/fetch_emails.py`
-- Add new parameters to function signature
-- Pass through from `tasks.py`
-
-### To change summary format:
+### To modify summary format:
 - Edit `SYSTEM_PROMPT` in `modules/prompt.py`
-- LLM will follow new instructions on next run
 
-### To add new email recipient:
-- Update `MY_EMAIL` in `.env`
-- Or call `send_email()` directly with different recipients
-
-## Common Tasks
-
-### Run manually in Docker:
-```bash
-docker compose exec huey python -c "from tasks import daily_email_summary; daily_email_summary.enqueue()"
-```
-
-### Check Huey worker logs:
-```bash
-docker compose logs -f huey
-```
-
-### Test in IPython:
-```bash
-docker compose exec huey uv run ipython
-```
-
-### Check job status (in IPython):
-```python
-# Enqueue a job
-%daily_email_summary
-# Output: <job_id>
-
-# Check status
-%check_job_status <job_id>
-```
-
-### Send test email:
-```python
-from tasks import send_email
-send_email('test@example.com', 'Test Subject', 'Hello World!')
-```
+### To add per-user settings:
+- Add field to users.json
+- Update `get_user_settings()` in tasks.py to read it
 
 ## Dependencies
 
@@ -293,5 +356,14 @@ send_email('test@example.com', 'Test Subject', 'Hello World!')
 - **langchain-groq**: Groq LLM
 - **langchain-google-genai**: Google Gemini
 - **loguru**: Logging
-- **rich**: Terminal formatting
 - **redis**: Task queue backend (Upstash)
+
+## Environment Setup Priority
+
+When a user is processed:
+1. Per-user settings from users.json (if specified)
+2. Global defaults from .env (if not in users.json)
+
+Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they get:
+- schedule_time: "09:00" (from users.json)
+- max_email_results: 20 (from .env default)

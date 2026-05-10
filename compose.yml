@@ -17,6 +17,7 @@ services:
       - ./modules:/app/modules
       - ./tasks.py:/app/tasks.py
       - ./gauth:/app/gauth
+      - ./users.json:/app/users.json
     command: uv run huey_consumer tasks.huey -k thread -w 2 --flush-locks info
     healthcheck:
       test: [

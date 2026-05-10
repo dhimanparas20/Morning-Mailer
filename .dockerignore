@@ -47,9 +47,7 @@ README*
 LICENSE
 *.md
 
-# Docker
-Dockerfile
-docker-compose*.yml
+# Docker (keep these for build)
 .dockerignore
 
 # Database

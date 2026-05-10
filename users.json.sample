@@ -1,0 +1,36 @@
+[
+  {
+    "name": "Your Name",
+    "email": "your-email@gmail.com",
+    "keyword": "default",
+    "active": true,
+    "max_email_results": 20,
+    "days_threshold": 2,
+    "schedule_time": "08:00",
+    "smtp_host_user": "your-email@gmail.com",
+    "smtp_host_password": "your-app-password"
+  },
+  {
+    "name": "Work Account",
+    "email": "work@company.com",
+    "keyword": "work",
+    "active": true,
+    "max_email_results": 10,
+    "days_threshold": 1,
+    "schedule_time": "09:00"
+  },
+  {
+    "name": "Morning Person",
+    "email": "morning@email.com",
+    "keyword": "morning",
+    "active": true,
+    "schedule_time": "06:00"
+  },
+  {
+    "name": "Evening Person",
+    "email": "evening@email.com",
+    "keyword": "evening",
+    "active": false,
+    "schedule_time": "20:00"
+  }
+]

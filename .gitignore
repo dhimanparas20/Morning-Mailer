@@ -21,9 +21,15 @@ htmlcov/
 *.log
 
 # OAuth/Credentials (sensitive)
+gauth
 gauth/token.json
 gauth/client_secret.json
+gauth/tokens/token_*.json
+gauth/client_secret_web.json
+
+# User configuration (contains sensitive data)
+users.json
 
 # OS
 .DS_Store
-Thumbs.db
+Thumbs.dbgauth/client_secret_web.json

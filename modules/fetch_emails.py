@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,10 +21,22 @@ from modules.generics import format_timestamp
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-CREDENTIALS_FILE = Path("gauth/client_secret.json")
-TOKEN_FILE = Path("gauth/token.json")
+BASE_DIR = Path("gauth")
+TOKENS_DIR = BASE_DIR / "tokens"
+
+CREDENTIALS_FILE = BASE_DIR / "client_secret.json"
 
 logger = get_logger("[fetch_gmail]", show_time=True)
+
+
+def get_credentials_path() -> Path:
+    if CREDENTIALS_FILE.exists():
+        return CREDENTIALS_FILE
+    raise FileNotFoundError(f"Credentials file not found: {CREDENTIALS_FILE}")
+
+
+def get_token_path(keyword: str) -> Path:
+    return TOKENS_DIR / f"token_{keyword}.json"
 
 
 def clean_text(text: str) -> str:
@@ -34,13 +48,16 @@ def clean_text(text: str) -> str:
     return text
 
 
-def get_gmail_service() -> Any:
+def get_gmail_service(keyword: str = "default") -> Any:
     try:
         creds = None
 
-        if TOKEN_FILE.exists():
-            logger.info(f"Loading credentials from {TOKEN_FILE}")
-            creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+        token_path = get_token_path(keyword)
+        creds_path = get_credentials_path()
+
+        if token_path.exists():
+            logger.info(f"Loading credentials from {token_path}")
+            creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
         if creds and creds.valid:
             logger.debug("Credentials are valid, reusing existing token")
@@ -50,35 +67,33 @@ def get_gmail_service() -> Any:
             logger.info("Access token expired, attempting refresh...")
             try:
                 creds.refresh(Request())
-                TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+                token_path.write_text(creds.to_json(), encoding="utf-8")
                 logger.success("Token refreshed and saved successfully")
                 return build("gmail", "v1", credentials=creds)
             except Exception as refresh_error:
                 logger.error(f"Token refresh failed: {refresh_error}")
                 raise
 
-        if not CREDENTIALS_FILE.exists():
+        if not creds_path.exists():
             raise FileNotFoundError(
-                f"{CREDENTIALS_FILE} not found. Download OAuth Desktop credentials "
-                "from Google Cloud Console and place it beside this script."
+                f"{creds_path} not found. Download OAuth Desktop credentials "
+                "from Google Cloud Console and place it as gauth/client_secret.json"
             )
 
         logger.info("No valid credentials found, initiating OAuth flow...")
-        
+
         try:
-            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
             creds = flow.run_local_server(port=0)
         except Exception as browser_error:
-            # No browser available - use manual OAuth flow
             logger.warning("=" * 60)
             logger.warning("No browser detected. Using manual OAuth flow.")
             logger.warning("Follow these steps:")
             logger.warning("")
-            
-            # Re-create flow to get authorization URL
-            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
+
+            flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
             auth_url, _ = flow.authorization_url(access_type='offline', prompt='consent')
-            
+
             logger.warning(f"1. Visit this URL in your browser:")
             logger.warning(f"   {auth_url}")
             logger.warning("")
@@ -89,15 +104,13 @@ def get_gmail_service() -> Any:
             logger.warning("")
             logger.warning("4. Copy the code value (everything after 'code=' until '&')")
             logger.warning("")
-            
-            # This works in IPython but not in Huey worker
+
             code = input("Enter the authorization code: ").strip()
-            
-            # Fetch token using the code
+
             flow.fetch_token(code=code)
             creds = flow.credentials
-        
-        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+
+        token_path.write_text(creds.to_json(), encoding="utf-8")
         logger.success("OAuth flow completed and token saved")
 
         return build("gmail", "v1", credentials=creds)
@@ -157,6 +170,7 @@ def parse_date(date_str: str) -> datetime | None:
 
 
 def fetch_emails(
+    keyword: str = "default",
     max_results: int = 10,
     query: str | None = None,
     sender: str | None = None,
@@ -177,7 +191,8 @@ def fetch_emails(
     }
 
     try:
-        service = get_gmail_service()
+        logger = get_logger(f"[fetch_gmail:{keyword}]", show_time=True)
+        service = get_gmail_service(keyword)
 
         gmail_query_parts = [query] if query else []
         if sender:
@@ -215,11 +230,12 @@ def fetch_emails(
             }
             return result
 
-        logger.info(f"Retrieved {len(messages)} email(s), fetching details...")
+        logger.info(f"Retrieved {len(messages)} email(s), fetching details in parallel...")
 
-        for msg_ref in messages:
+        def fetch_single_email(msg_ref: dict) -> dict | None:
             try:
-                msg = service.users().messages().get(
+                thread_service = get_gmail_service(keyword)
+                msg = thread_service.users().messages().get(
                     userId="me",
                     id=msg_ref["id"],
                     format="full",
@@ -231,7 +247,7 @@ def fetch_emails(
                 raw_date = get_header(headers, "Date")
                 parsed_date = parse_date(raw_date)
 
-                email_data = {
+                return {
                     "id": msg.get("id", ""),
                     "thread_id": msg.get("threadId", ""),
                     "from": get_header(headers, "From"),
@@ -248,17 +264,23 @@ def fetch_emails(
                         if part.get("filename")
                     ),
                 }
-                result["emails"].append(email_data)
-                sender_match = re.match(r"[^<]*<([^>]+)>", email_data["from"])
-                sender = sender_match.group(1) if sender_match else email_data["from"]
-                logger.debug(f"Processed: [{sender}] {email_data['subject'][:50]}")
-
             except HttpError as e:
                 logger.error(f"HTTP error fetching email {msg_ref['id']}: {e}")
-                continue
+                return None
             except Exception as e:
                 logger.error(f"Unexpected error processing email {msg_ref['id']}: {e}")
-                continue
+                return None
+
+        max_workers = min(5, len(messages))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_single_email, msg): msg for msg in messages}
+            for future in as_completed(futures):
+                email_data = future.result()
+                if email_data:
+                    result["emails"].append(email_data)
+                    sender_match = re.match(r"[^<]*<([^>]+)>", email_data["from"])
+                    sender = sender_match.group(1) if sender_match else email_data["from"]
+                    logger.debug(f"Processed: [{sender}] {email_data['subject'][:50]}")
 
         if date_from:
             date_from_ts = datetime.fromisoformat(date_from).timestamp()
@@ -324,12 +346,71 @@ def fetch_emails(
         logger.exception(f"Gmail API error: {e}")
         return result
     except Exception as e:
-        result["error"] = f"Unexpected error: {e}"
-        logger.exception(f"Unexpected error: {e}")
-        return result
+            result["error"] = f"Unexpected error: {e}"
+            logger.exception(f"Unexpected error: {e}")
+            return result
+
+
+def load_users() -> list[dict[str, str]]:
+    users_file = Path("users.json")
+    if not users_file.exists():
+        logger.warning("users.json not found, using default single user")
+        return [{"name": "Default", "email": "unknown", "keyword": "default"}]
+
+    with open(users_file, "r", encoding="utf-8") as f:
+        users = json.load(f)
+
+    if not users:
+        logger.warning("No users found in users.json")
+        return []
+
+    return users
 
 
 if __name__ == "__main__":
     import json
-    result = fetch_emails(max_results=10, query="in:inbox")
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    import sys
+
+    if len(sys.argv) > 1:
+        command = sys.argv[1]
+
+        if command == "setup" and len(sys.argv) > 2:
+            keyword = sys.argv[2]
+            print(f"Running OAuth setup for keyword: {keyword}")
+            get_gmail_service(keyword)
+        elif command == "users":
+            users = load_users()
+            print(f"Loaded {len(users)} user(s):")
+            for user in users:
+                active_status = "active" if user.get("active", True) else "inactive"
+                print(f"  - {user.get('name', 'N/A')}: {user.get('email', 'N/A')} (keyword: {user.get('keyword', 'default')}, {active_status})")
+        elif command == "check":
+            users = load_users()
+            print(f"Checking tokens for {len(users)} user(s):")
+            for user in users:
+                keyword = user.get("keyword", "default")
+                name = user.get("name", "Unknown")
+                try:
+                    token_path = get_token_path(keyword)
+                    if token_path.exists():
+                        print(f"  ✓ {name} ({keyword}): token exists")
+                    else:
+                        print(f"  ✗ {name} ({keyword}): token MISSING - run 'python -m modules.fetch_emails setup {keyword}'")
+                except FileNotFoundError:
+                    print(f"  ✗ {name} ({keyword}): token MISSING - run 'python -m modules.fetch_emails setup {keyword}'")
+        else:
+            print("Usage:")
+            print("  python -m modules.fetch_emails setup <keyword>   # Run OAuth for a specific user")
+            print("  python -m modules.fetch_emails users            # List all users")
+            print("  python -m modules.fetch_emails check            # Check which users have tokens")
+    else:
+        users = load_users()
+        print(f"Loaded {len(users)} user(s):")
+        for user in users:
+            print(f"  - {user.get('name', 'N/A')}: {user.get('email', 'N/A')} (keyword: {user.get('keyword', 'default')})")
+
+        if users:
+            keyword = users[0].get("keyword", "default")
+            print(f"\nFetching emails for user: {keyword}")
+            result = fetch_emails(keyword=keyword, max_results=10, query="in:inbox")
+            print(json.dumps(result, indent=2, ensure_ascii=False))

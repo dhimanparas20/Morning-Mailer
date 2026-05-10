@@ -58,6 +58,25 @@ def run_summarize(line):
 
 
 @register_line_magic
+def clear_last_run(line):
+    """Clear last run date for a user (or all users) to allow re-running. Usage: %clear_last_run [keyword|all]"""
+    from tasks import load_users, get_user_last_run_date, set_user_last_run_date
+
+    users = load_users()
+    keyword = line.strip()
+
+    if not keyword or keyword == "all":
+        print("[yellow]Clearing last_run for ALL users...[/yellow]")
+        for user in users:
+            kw = user.get("keyword", "default")
+            r.delete(f"morning_mailer:last_run:{kw}")
+            print(f"  ✓ Cleared: {user.get('name')} ({kw})")
+    else:
+        r.delete(f"morning_mailer:last_run:{keyword}")
+        print(f"[green]Cleared last_run for keyword: {keyword}[/green]")
+
+
+@register_line_magic
 def send_test_email(line):
     """Send a test email. Usage: %send_test_email subject body"""
     parts = line.strip().split(None, 1)
@@ -84,5 +103,71 @@ def redis_status(line):
         print(f"[red]✗[/red] Redis error: {e}")
 
 
+@register_line_magic
+def setup_oauth(line):
+    """Setup OAuth token for a user. Usage: %setup_oauth <keyword>"""
+    keyword = line.strip()
+    if not keyword:
+        print("Usage: %setup_oauth <keyword>")
+        print("Example: %setup_oauth bobyHP07")
+        return
+
+    print(f"Running OAuth setup for keyword: {keyword}")
+    from modules.fetch_emails import get_gmail_service
+    get_gmail_service(keyword)
+    print(f"✓ Token should be created at gauth/tokens/token_{keyword}.json")
+
+
+@register_line_magic
+def setup_web_oauth(line):
+    """Setup OAuth using web browser flow. Usage: %setup_web_oauth <keyword>"""
+    keyword = line.strip()
+    if not keyword:
+        print("Usage: %setup_web_oauth <keyword>")
+        print("Example: %setup_web_oauth friend")
+        print("\nNote: Requires web app credentials in gauth/client_secret.json")
+        return
+
+    print(f"[yellow]Starting web OAuth for: {keyword}[/yellow]")
+    print("(Make sure you have web app credentials in gauth/client_secret.json)")
+    print("")
+    from modules.web_auth import setup_web_oauth as do_web_auth
+    do_web_auth(keyword)
+
+
+@register_line_magic
+def check_tokens(line):
+    """Check which users have tokens."""
+    import json
+    from pathlib import Path
+
+    print("[bold]Token Status:[/bold]")
+    print()
+
+    users_file = Path("users.json")
+    if not users_file.exists():
+        print("No users.json found")
+        return
+
+    with open(users_file, "r") as f:
+        users = json.load(f)
+
+    for user in users:
+        keyword = user.get("keyword", "default")
+        name = user.get("name", "Unknown")
+        active = user.get("active", True)
+
+        token_path = Path(f"gauth/tokens/token_{keyword}.json")
+        if token_path.exists():
+            status = "[green]✓[/green]" if active else "[yellow]⚠[/yellow] (inactive)"
+            print(f"  {status} {name} ({keyword})")
+        else:
+            status = "[red]✗[/red]" if active else "[gray]-[/gray] (inactive)"
+            print(f"  {status} {name} ({keyword}) - run '%setup_oauth {keyword}'")
+
+    print()
+    print("Run '%setup_oauth <keyword>' to create a new token")
+
+
 print("[green]✓[/green] Morning Mailer magic functions loaded")
-print("Available: %daily_email_summary, %check_job_status, %run_fetch, %run_summarize, %send_test_email, %redis_status")
+print("Available: %daily_email_summary, %check_job_status, %run_fetch, %run_summarize, %send_test_email, %redis_status, %setup_oauth, %check_tokens")
