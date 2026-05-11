@@ -30,9 +30,32 @@ services:
       start_period: 10s
       start_interval: 2s
 
+#  dozzle-agent:
+#    image: amir20/dozzle:latest
+#    container_name: dozzle-agent
+#    restart: unless-stopped
+#    command: agent
+#    volumes:
+#      - /var/run/docker.sock:/var/run/docker.sock:ro
+#    ports:
+#      - "7007:7007" # The default port for Dozzle agents
+#    networks:
+#      - app-network
+#    environment:
+#      - DOZZLE_HOSTNAME=Morning-Mailer
+#      - DOZZLE_LEVEL=info
+#    #      - DOZZLE_FILTER=label=titan-brain
+#    healthcheck:
+#      test: [ "CMD", "/dozzle", "healthcheck" ]
+#      interval: 30s
+#      retries: 5
+#      start_period: 5s
+#      start_interval: 2s
+
 networks:
   app-network:
     driver: bridge
 
 volumes:
   redis-data:
+#  dozzle_data:

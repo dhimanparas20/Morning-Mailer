@@ -107,8 +107,8 @@ Create `users.json` with your users:
 - `smtp_host_password`: Custom SMTP password (optional, falls back to .env)
 
 ### 4. First-Time OAuth Setup
-For each user keyword, generate a token:
 
+#### Option A: Desktop OAuth (local machine)
 ```bash
 # CLI - generate token for a keyword
 uv run python -m modules.fetch_emails setup <keyword>
@@ -129,7 +129,39 @@ uv run ipython
 %check_tokens
 ```
 
-The OAuth flow will open your browser. After login, token is saved to `gauth/tokens/token_<keyword>.json`.
+#### Option B: Web OAuth (remote/server via itcyou)
+
+For server/remote setups without browser access, use Web OAuth with itcyou tunnel:
+
+1. **Start itcyou tunnel** (choose your subdomain):
+```bash
+docker run -d --rm --network host --name itcyou \
+  -e ITCYOU_PORT=47433 \
+  -e ITCYOU_SUBDOMAIN=morning-mailer \
+  dhimanparas20/itcyou:latest
+```
+
+2. **Configure Google Cloud Console** with your domain:
+   - Authorized JavaScript origin: `https://morning-mailer.it.cyou`
+   - Authorized redirect URI: `https://morning-mailer.it.cyou/callback`
+
+3. **Download OAuth JSON** → save as `gauth/client_secret_web.json`
+
+4. **Set callback URL in .env**:
+```bash
+OAUTH_CALLBACK_URL=https://morning-mailer.it.cyou/callback
+```
+
+5. **Generate token**:
+```bash
+# CLI
+uv run python -m modules.web_auth <keyword>
+
+# Or in IPython
+%setup_web_oauth keyword
+```
+
+The OAuth flow will open your browser (or show URL to open). After login, token is saved to `gauth/tokens/token_<keyword>.json`.
 
 ### 5. Run
 ```bash
