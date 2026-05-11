@@ -247,21 +247,7 @@ Morning-Mailer/
 
 ## Token Setup
 
-### First-Time OAuth (for the first user):
-```bash
-# Option A: Using setup script
-./oauth_setup.sh
-
-# Option B: Using Python
-uv run python -c "from modules.fetch_emails import get_gmail_service; get_gmail_service()"
-
-# Option C: Using IPython magic
-%setup_oauth default
-```
-
-### Adding New User Tokens:
-When you add a new user to users.json with a new keyword, you must generate their token:
-
+### Option A: Desktop OAuth (local machine)
 ```bash
 # Using CLI
 uv run python -m modules.fetch_emails setup <keyword>
@@ -273,6 +259,38 @@ uv run python -m modules.fetch_emails setup myname
 
 # Using IPython
 %setup_oauth work
+```
+
+### Option B: Web OAuth (remote/server via itcyou)
+
+For server/remote setups without browser access, use Web OAuth with itcyou tunnel:
+
+1. **Start itcyou tunnel** (choose your subdomain):
+```bash
+docker run -d --rm --network host --name itcyou \
+  -e ITCYOU_PORT=47433 \
+  -e ITCYOU_SUBDOMAIN=morning-mailer \
+  dhimanparas20/itcyou:latest
+```
+
+2. **Configure Google Cloud Console** with your domain:
+   - Authorized JavaScript origin: `https://morning-mailer.it.cyou`
+   - Authorized redirect URI: `https://morning-mailer.it.cyou/callback`
+
+3. **Download OAuth JSON** → save as `gauth/client_secret_web.json`
+
+4. **Set callback URL in .env**:
+```bash
+OAUTH_CALLBACK_URL=https://morning-mailer.it.cyou/callback
+```
+
+5. **Generate token**:
+```bash
+# CLI
+uv run python -m modules.web_auth <keyword>
+
+# Or in IPython
+%setup_web_oauth keyword
 ```
 
 ### Checking Token Status:
