@@ -40,7 +40,7 @@ def check_job_status(job_id):
 def run_fetch(line):
     """Run email fetch directly (no Huey)."""
     from tasks import fetch_emails_with_retry
-    result = fetch_emails_with_retry()
+    result = fetch_emails_with_retry(keyword=line,max_results=20,days_threshold=1)
     print(f"Fetched: {result.get('count')} emails")
     return result
 
@@ -49,7 +49,7 @@ def run_fetch(line):
 def run_summarize(line):
     """Run email summary on last fetched emails."""
     from tasks import fetch_emails_with_retry, summarize_emails
-    result = fetch_emails_with_retry()
+    result = fetch_emails_with_retry(keyword=line,max_results=20,days_threshold=1)
     if result.get("emails"):
         summary = summarize_emails(result["emails"])
         print(summary)
