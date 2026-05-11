@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import requests
 from dotenv import load_dotenv
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -27,6 +28,7 @@ from rich.panel import Panel
 from modules import get_logger, format_timestamp
 from modules.fetch_emails import fetch_emails, load_users as load_email_users, get_token_path
 from modules.agent_mod import AgentModule
+from modules.prompt import WHATSAPP_SYSTEM_PROMPT
 
 import redis
 
@@ -46,6 +48,11 @@ MAX_THREAD_WORKERS = int(os.getenv("MAX_THREAD_WORKERS", 5))
 SCHEDULE_TIME = os.getenv("SCHEDULE_TIME", "08:00")  # Default time for users without schedule_time
 DAYS_THRESHOLD = int(os.getenv("DAYS_THRESHOLD", 1))
 SCHEDULE_CHECK_INTERVAL = int(os.getenv("SCHEDULE_CHECK_INTERVAL", 5))  # Check every N minutes
+
+# WhatsApp (WAHA) configuration
+WAHA_API_URL = os.getenv("WAHA_API_URL", "http://waha:3000")
+WAHA_API_KEY = os.getenv("WAHA_API_KEY", "")
+WAHA_SESSION = os.getenv("WAHA_SESSION", "default")
 
 # Global LLM agent instance
 AGENT = AgentModule()
@@ -70,8 +77,11 @@ def set_user_last_run_date(keyword: str, date_str: str, schedule_time: str = Non
         redis_client.set(schedule_key, schedule_time)
 
 
-def should_run_today(user: dict[str, Any], global_schedule_time: str) -> bool:
-    """Check if user should run today based on their schedule_time."""
+def should_run_today(user: dict[str, Any], global_schedule_time: str, redis_prefix: str = "") -> bool:
+    """Check if user should run today based on their schedule_time.
+    
+    redis_prefix: optional prefix for Redis keys (e.g., "whatsapp_" for WhatsApp task)
+    """
     keyword = user.get("keyword", "default")
     user_schedule = user.get("schedule_time", global_schedule_time)
 
@@ -87,19 +97,19 @@ def should_run_today(user: dict[str, Any], global_schedule_time: str) -> bool:
     env_mode = os.getenv("ENV_MODE", "dev").lower()
     today_str = now.strftime("%Y-%m-%d")
 
-    last_run = get_user_last_run_date(keyword)
-    last_schedule_run = redis_client.get(f"morning_mailer:last_schedule:{keyword}")
+    last_run = redis_client.get(f"morning_mailer:{redis_prefix}last_run:{keyword}")
+    last_schedule_run = redis_client.get(f"morning_mailer:{redis_prefix}last_schedule:{keyword}")
 
     if env_mode == "dev":
         if last_schedule_run != user_schedule:
-            logger.debug(f"[{keyword}] DEV mode: schedule changed from {last_schedule_run} to {user_schedule}")
+            logger.debug(f"[{keyword}] DEV: schedule changed from {last_schedule_run} to {user_schedule}, running")
             return True
         if last_run != today_str:
-            logger.debug(f"[{keyword}] DEV mode: first run today at {user_schedule}")
             return True
-        logger.debug(f"[{keyword}] DEV mode: already ran at {user_schedule}, skipping")
+        logger.debug(f"[{keyword}] DEV: already ran at {user_schedule}, skipping")
         return False
 
+    # PROD: only run once per day
     return last_run != today_str
 
 
@@ -224,10 +234,10 @@ def fetch_emails_with_retry(keyword: str, max_results: int = None, days_threshol
     return {"success": False, "error": last_error, "count": 0, "emails": []}
 
 
-def summarize_emails(emails: list[dict[str, Any]]) -> str:
+def summarize_emails(emails: list[dict[str, Any]], user_name: str = None) -> str:
     """Summarize emails using LLM."""
     logger.info(f"Summarizing {len(emails)} emails...")
-    summary = AGENT.summarize_emails(emails)
+    summary = AGENT.summarize_emails(emails, user_name=user_name)
     logger.success("Email summary generated")
     return summary
 
@@ -270,6 +280,30 @@ def send_email(
     return f"Email sent successfully to {recipients}"
 
 
+def send_whatsapp(mobile: str, text: str) -> str:
+    """Send WhatsApp message via WAHA API."""
+    if not WAHA_API_KEY:
+        raise ValueError("WAHA_API_KEY not configured. Set WAHA_API_KEY in .env")
+
+    chat_id = f"{mobile}@c.us"
+    url = f"{WAHA_API_URL}/api/sendText"
+    headers = {
+        "X-Api-Key": WAHA_API_KEY,
+        "Content-Type": "application/json",
+    }
+    data = {
+        "session": WAHA_SESSION,
+        "chatId": chat_id,
+        "text": text,
+    }
+
+    logger.info(f"[send_whatsapp] Sending WhatsApp message to {chat_id}")
+    response = requests.post(url, json=data, headers=headers, timeout=30)
+    response.raise_for_status()
+    logger.success(f"[send_whatsapp] WhatsApp message sent to {chat_id}")
+    return f"WhatsApp message sent to {chat_id}"
+
+
 def has_valid_token(keyword: str) -> bool:
     """Check if user has a valid OAuth token file."""
     try:
@@ -307,7 +341,7 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
     emails_fetched = result.get("count", 0) if result.get("success") else 0
 
     if result["success"] and result["emails"]:
-        summary = summarize_emails(result["emails"])
+        summary = summarize_emails(result["emails"], user_name=user_name)
 
         logger.info(f"[{keyword}] Email summary generated, sending to {user_email}")
 
@@ -366,11 +400,13 @@ def daily_email_summary() -> dict[str, Any]:
         if not user.get("active", True):
             logger.debug(f"User {user.get('name', 'unknown')} skipped: inactive")
             continue
+        if not user.get("use_email", True):
+            logger.debug(f"User {user.get('name', 'unknown')} skipped: use_email=false")
+            continue
         keyword = user.get("keyword", "default")
         user_schedule = user.get("schedule_time", SCHEDULE_TIME)
-        last_run = get_user_last_run_date(keyword)
         should_run = should_run_today(user, SCHEDULE_TIME)
-        logger.debug(f"User check: {user.get('name')} ({keyword}): schedule={user_schedule}, last_run={last_run}, should_run={should_run}")
+        logger.debug(f"User check: {user.get('name')} ({keyword}): schedule={user_schedule}, should_run={should_run}")
         if should_run:
             eligible_users.append(user)
 
@@ -411,6 +447,108 @@ def daily_email_summary() -> dict[str, Any]:
     }
 
 
+@huey.task(retries=3, retry_delay=5)
+def send_whatsapp_task(mobile: str, text: str) -> str:
+    """Send WhatsApp message via WAHA API (Huey task)."""
+    return send_whatsapp(mobile, text)
+
+
+@huey.periodic_task(crontab(minute=f"*/{SCHEDULE_CHECK_INTERVAL}"))
+def daily_whatsapp_summary() -> dict[str, Any]:
+    """
+    Scheduled task: Check and process users for WhatsApp summaries.
+
+    Runs every SCHEDULE_CHECK_INTERVAL minutes. For each user with a mobile:
+    - Check if current time >= user's schedule_time (or global SCHEDULE_TIME)
+    - Check if user hasn't been processed today
+    - Fetch emails, summarize with WhatsApp prompt, send via WAHA
+    """
+    now = datetime.now()
+    current_time_str = now.strftime("%H:%M")
+    today_str = now.strftime("%Y-%m-%d")
+
+    if not WAHA_API_KEY:
+        logger.warning("WAHA_API_KEY not set, skipping WhatsApp summary")
+        return {"date": today_str, "time": now.strftime("%H:%M:%S"), "error": "WAHA_API_KEY not configured"}
+
+    logger.debug(f"Checking WhatsApp schedule at {current_time_str}...")
+
+    users = load_users()
+
+    eligible_users = []
+    for user in users:
+        if not user.get("active", True):
+            continue
+        mobile = user.get("mobile", "")
+        if not mobile:
+            logger.debug(f"User {user.get('name', 'unknown')} skipped: no mobile number")
+            continue
+        if not user.get("use_whatsapp", True):
+            logger.debug(f"User {user.get('name', 'unknown')} skipped: use_whatsapp=false")
+            continue
+        keyword = user.get("keyword", "default")
+        user_schedule = user.get("schedule_time", SCHEDULE_TIME)
+        should_run = should_run_today(user, SCHEDULE_TIME, redis_prefix="whatsapp_")
+        logger.debug(f"WhatsApp user check: {user.get('name')} ({keyword}): schedule={user_schedule}, should_run={should_run}")
+        if should_run:
+            eligible_users.append(user)
+
+    if not eligible_users:
+        logger.debug(f"No WhatsApp users eligible to run at {current_time_str}")
+        return {
+            "date": today_str,
+            "time": now.strftime("%H:%M:%S"),
+            "eligible_users": 0,
+            "processed": 0,
+        }
+
+    logger.info(f"Found {len(eligible_users)} WhatsApp user(s) eligible at {current_time_str}")
+
+    results = []
+    for user in eligible_users:
+        keyword = user.get("keyword", "default")
+        user_name = user.get("name", "Unknown")
+        mobile = user.get("mobile", "")
+        max_results, days_threshold = get_user_settings(user)
+
+        if not has_valid_token(keyword):
+            logger.warning(f"[{keyword}] WhatsApp: OAuth token not found, skipping")
+            results.append({"keyword": keyword, "name": user_name, "mobile": mobile, "error": "OAuth token missing"})
+            continue
+
+        result = fetch_emails_with_retry(keyword, max_results, days_threshold)
+        emails_fetched = result.get("count", 0) if result.get("success") else 0
+
+        if not result["success"] or not result["emails"]:
+            results.append({"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched})
+            continue
+
+        summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
+
+        try:
+            send_whatsapp(mobile, summary)
+            user_schedule = user.get("schedule_time", SCHEDULE_TIME)
+            redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
+            redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user_schedule)
+            logger.success(f"[{keyword}] WhatsApp summary sent to {mobile}")
+            results.append({"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched})
+        except Exception as e:
+            logger.error(f"[{keyword}] WhatsApp send failed: {e}")
+            results.append({"keyword": keyword, "name": user_name, "mobile": mobile, "error": str(e)})
+
+    total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
+    logger.info(f"WhatsApp scheduled task completed: {len(results)} user(s) processed, {total_emails} emails")
+
+    return {
+        "date": today_str,
+        "time": now.strftime("%H:%M:%S"),
+        "eligible_users": len(eligible_users),
+        "processed": len(results),
+        "total_emails_fetched": total_emails,
+        "results": results,
+    }
+
+
 logger.info(f"Scheduler: checking every {SCHEDULE_CHECK_INTERVAL} min, default time {SCHEDULE_TIME}, max_results {MAX_EMAIL_RESULTS}, days {DAYS_THRESHOLD}")
 
 
@@ -434,6 +572,9 @@ def print_startup_summary():
     scheduler_table.add_row("Retry Count", str(RETRY_COUNT))
     scheduler_table.add_row("Retry Delay", f"{RETRY_DELAY}s")
     scheduler_table.add_row("Env Mode", os.getenv("ENV_MODE", "dev").upper())
+    scheduler_table.add_row("WAHA URL", WAHA_API_URL)
+    scheduler_table.add_row("WAHA Session", WAHA_SESSION)
+    scheduler_table.add_row("WAHA Key", "*****" if WAHA_API_KEY else "(not set)")
     console.print(scheduler_table)
 
     # Users Table
@@ -447,6 +588,9 @@ def print_startup_summary():
     users_table.add_column("Schedule", style="magenta")
     users_table.add_column("Max Emails", style="blue", justify="center")
     users_table.add_column("Days", style="blue", justify="center")
+    users_table.add_column("Mobile", style="yellow")
+    users_table.add_column("Email?", style="green", justify="center")
+    users_table.add_column("WA?", style="green", justify="center")
     users_table.add_column("Active", style="green", justify="center")
     users_table.add_column("Token", style="red", justify="center")
 
@@ -456,6 +600,9 @@ def print_startup_summary():
         max_emails = user.get("max_email_results", MAX_EMAIL_RESULTS)
         days = user.get("days_threshold", DAYS_THRESHOLD)
         active = "✓" if user.get("active", True) else "✗"
+        use_email = "✓" if user.get("use_email", True) else "✗"
+        use_whatsapp = "✓" if user.get("use_whatsapp", True) else "✗"
+        mobile = user.get("mobile", "-")
         token_exists = "✓" if has_valid_token(keyword) else "✗"
 
         users_table.add_row(
@@ -466,6 +613,9 @@ def print_startup_summary():
             schedule,
             str(max_emails),
             str(days),
+            mobile,
+            use_email,
+            use_whatsapp,
             active,
             token_exists
         )

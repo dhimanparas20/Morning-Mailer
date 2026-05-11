@@ -4,6 +4,8 @@ from IPython.core.getipython import get_ipython
 from IPython.core.magic import register_line_magic
 from dotenv import load_dotenv
 from rich import print
+from rich.console import Console
+from rich.table import Table
 
 load_dotenv()
 
@@ -23,7 +25,12 @@ if ip is not None:
 @register_line_magic
 def daily_email_summary(line):
     """Enqueue the daily email fetch and summarize task."""
-    from tasks import daily_email_summary
+    from tasks import daily_email_summary, load_users
+    users = load_users()
+    for user in users:
+        kw = user.get("keyword", "default")
+        r.delete(f"morning_mailer:last_run:{kw}")
+        r.delete(f"morning_mailer:last_schedule:{kw}")
     job = daily_email_summary()
     print(f"Job enqueued: {job.id}")
 
@@ -169,5 +176,80 @@ def check_tokens(line):
     print("Run '%setup_oauth <keyword>' to create a new token")
 
 
+@register_line_magic
+def daily_whatsapp_summary(line):
+    """Enqueue the daily WhatsApp summary task."""
+    from tasks import daily_whatsapp_summary, load_users
+    users = load_users()
+    for user in users:
+        kw = user.get("keyword", "default")
+        r.delete(f"morning_mailer:whatsapp_last_run:{kw}")
+        r.delete(f"morning_mailer:whatsapp_last_schedule:{kw}")
+    job = daily_whatsapp_summary()
+    print(f"WhatsApp job enqueued: {job.id}")
+
+
+@register_line_magic
+def send_test_whatsapp(line):
+    """Send a test WhatsApp message. Usage: %send_test_whatsapp <mobile_number> <message>"""
+    parts = line.strip().split(None, 1)
+    if len(parts) < 2:
+        print("Usage: %send_test_whatsapp <mobile_number> <message>")
+        print("Example: %send_test_whatsapp 919418168860 Hello from Morning Mailer!")
+        return
+    mobile, text = parts[0], parts[1]
+    from tasks import send_whatsapp
+    try:
+        result = send_whatsapp(mobile, text)
+        print(f"[green]✓ {result}[/green]")
+    except Exception as e:
+        print(f"[red]✗ WhatsApp send failed: {e}[/red]")
+
+
+@register_line_magic
+def summarize_whatsapp(line):
+    """Fetch and summarize emails in WhatsApp format. Usage: %summarize_whatsapp <keyword>"""
+    keyword = line.strip()
+    if not keyword:
+        print("Usage: %summarize_whatsapp <keyword>")
+        return
+    from tasks import fetch_emails_with_retry, summarize_emails
+    from modules.prompt import WHATSAPP_SYSTEM_PROMPT
+    result = fetch_emails_with_retry(keyword=keyword, max_results=20, days_threshold=1)
+    if result.get("emails"):
+        summary = summarize_emails(result["emails"])
+        print(summary)
+    else:
+        print("No emails to summarize")
+
+
 print("[green]✓[/green] Morning Mailer magic functions loaded")
-print("Available: %daily_email_summary, %check_job_status, %run_fetch, %run_summarize, %send_test_email, %redis_status, %setup_oauth, %check_tokens")
+
+console = Console()
+
+magics = [
+    ("%daily_email_summary", "", "Trigger the daily email summary task"),
+    ("%daily_whatsapp_summary", "", "Trigger the daily WhatsApp summary task"),
+    ("%send_test_email", "<subject> <body>", "Send a test email"),
+    ("%send_test_whatsapp", "<mobile> <message>", "Send a test WhatsApp message"),
+    ("%summarize_whatsapp", "<keyword>", "Fetch & summarize in WhatsApp format"),
+    ("%run_summarize", "<keyword>", "Fetch & summarize in HTML email format"),
+    ("%check_job_status", "<job_id>", "Check Huey job status by ID"),
+    ("%run_fetch", "<keyword>", "Fetch emails directly (no Huey)"),
+    ("%setup_oauth", "<keyword>", "OAuth token setup (desktop app)"),
+    ("%setup_web_oauth", "<keyword>", "OAuth token setup (web app)"),
+    ("%check_tokens", "", "Show token status for all users"),
+    ("%redis_status", "", "Check Redis connection health"),
+    ("%clear_last_run", "[keyword|all]", "Clear last run tracking in Redis"),
+    ("%cls", "", "Clear terminal screen"),
+]
+
+table = Table(title="[bold]Available Magic Functions[/bold]", show_header=True, header_style="bold cyan")
+table.add_column("Command", style="green", no_wrap=True)
+table.add_column("Parameters", style="yellow")
+table.add_column("Description", style="white")
+
+for cmd, params, desc in magics:
+    table.add_row(cmd, params, desc)
+
+console.print(table)

@@ -4,26 +4,34 @@
     "email": "your-email@gmail.com",
     "keyword": "default",
     "active": true,
+    "use_email": true,
+    "use_whatsapp": true,
     "max_email_results": 20,
     "days_threshold": 2,
     "schedule_time": "08:00",
     "smtp_host_user": "your-email@gmail.com",
-    "smtp_host_password": "your-app-password"
+    "smtp_host_password": "your-app-password",
+    "mobile": "911234567890"
   },
   {
     "name": "Work Account",
     "email": "work@company.com",
     "keyword": "work",
     "active": true,
+    "use_email": true,
+    "use_whatsapp": false,
     "max_email_results": 10,
     "days_threshold": 1,
-    "schedule_time": "09:00"
+    "schedule_time": "09:00",
+    "mobile": "911234567891"
   },
   {
     "name": "Morning Person",
     "email": "morning@email.com",
     "keyword": "morning",
     "active": true,
+    "use_email": true,
+    "use_whatsapp": true,
     "schedule_time": "06:00"
   },
   {
@@ -31,6 +39,9 @@
     "email": "evening@email.com",
     "keyword": "evening",
     "active": false,
-    "schedule_time": "20:00"
+    "use_email": false,
+    "use_whatsapp": false,
+    "schedule_time": "20:00",
+    "mobile": "911234567892"
   }
 ]

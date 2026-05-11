@@ -1,6 +1,6 @@
-# Morning Mailer 🤖📧
+# Morning Mailer 🤖📧📱
 
-AI-powered multi-user email summarization that fetches your Gmail (or multiple Gmail accounts), generates AI summaries in simple HTML, and emails them to each user daily.
+AI-powered multi-user email summarization that fetches your Gmail (or multiple Gmail accounts), generates AI summaries in HTML for email and plain-text for WhatsApp, and delivers them to each user daily.
 
 ## What It Does
 
@@ -8,8 +8,8 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 1. **Checks** each user's scheduled time in users.json
 2. **Fetches** emails from Gmail (past N days per user) in parallel
 3. **Categorizes** them: Critical, Important, Informational, or Ignored
-4. **Summarizes** using AI into simple, sober HTML summary
-5. **Emails** the summary to each user's inbox
+4. **Summarizes** using AI into HTML (email) or plain-text (WhatsApp)
+5. **Delivers** via SMTP email and/or WhatsApp (WAHA) per user preference
 
 ## New Features (v2.0+)
 
@@ -18,6 +18,8 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 - **Per-User Settings**: Customize max_email_results, days_threshold per user
 - **Parallel Processing**: Users processed concurrently
 - **Smart Fallbacks**: Global .env defaults when per-user settings not specified
+- **WhatsApp Integration**: Send summaries via WhatsApp using WAHA
+- **Per-Channel Toggle**: Enable/disable email (`use_email`) and WhatsApp (`use_whatsapp`) per user
 
 ## Quick Start
 
@@ -78,17 +80,22 @@ Create `users.json` with your users:
     "email": "your-email@gmail.com",
     "keyword": "default",
     "active": true,
+    "use_email": true,
+    "use_whatsapp": true,
     "max_email_results": 20,
     "days_threshold": 2,
     "schedule_time": "08:00",
     "smtp_host_user": "your-email@gmail.com",
-    "smtp_host_password": "your-app-password"
+    "smtp_host_password": "your-app-password",
+    "mobile": "919418168860"
   },
   {
     "name": "Work",
     "email": "work@company.com",
     "keyword": "work",
     "active": true,
+    "use_email": true,
+    "use_whatsapp": false,
     "max_email_results": 10,
     "schedule_time": "09:00"
   }
@@ -97,14 +104,17 @@ Create `users.json` with your users:
 
 **Fields:**
 - `name`: Display name
-- `email`: Where to send summary
+- `email`: Where to send email summary
 - `keyword`: Unique ID (links to token_<keyword>.json)
 - `active`: true/false (default: true)
+- `use_email`: Enable email delivery (default: true)
+- `use_whatsapp`: Enable WhatsApp delivery (default: true)
 - `max_email_results`: Max emails to fetch (optional, uses .env default)
 - `days_threshold`: Days to look back (optional, uses .env default)
 - `schedule_time`: When to run HH:MM (optional, uses .env SCHEDULE_TIME)
 - `smtp_host_user`: Custom SMTP sender (optional, falls back to .env)
 - `smtp_host_password`: Custom SMTP password (optional, falls back to .env)
+- `mobile`: WhatsApp number with country code, no `+` prefix (e.g., "919418168860")
 
 ### 4. First-Time OAuth Setup
 
@@ -223,6 +233,9 @@ Morning-Mailer/
 | `EMAIL_HOST_USER` | SMTP fallback username | - |
 | `EMAIL_HOST_PASSWORD` | SMTP fallback password | - |
 | `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth (e.g., ngrok tunnel) | - |
+| `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
+| `WAHA_API_KEY` | WAHA API key | - |
+| `WAHA_SESSION` | WAHA session name | default |
 
 ### Scheduling
 
@@ -250,14 +263,56 @@ docker compose exec huey uv run ipython
 | Command | Description |
 |---------|-------------|
 | `%daily_email_summary` | Enqueue the daily email fetch task |
+| `%daily_whatsapp_summary` | Enqueue the daily WhatsApp summary task |
 | `%check_job_status <job_id>` | Check status of a Huey job |
 | `%setup_oauth <keyword>` | Generate new OAuth token (desktop) |
 | `%setup_web_oauth <keyword>` | Generate new OAuth token (web app) |
 | `%check_tokens` | Show token status for all users |
 | `%send_test_email <subject> <body>` | Send test email |
+| `%send_test_whatsapp <mobile> <message>` | Send test WhatsApp message |
+| `%summarize_whatsapp <keyword>` | Fetch & summarize in WhatsApp format |
 | `%redis_status` | Check Redis connection |
 | `%clear_last_run [keyword\|all]` | Clear last run date for testing (use in DEV mode) |
 | `%cls` | Clear terminal screen |
+
+## WhatsApp Setup (WAHA)
+
+Morning Mailer uses [WAHA](https://waha.devlike.pro) (WhatsApp HTTP API) to send WhatsApp messages. WAHA runs as a Docker container and exposes a REST API to send/receive messages.
+
+### Quick WAHA Setup
+
+1. **Pull & configure WAHA** following the guide at [waha.devlike.pro/blog/waha-on-docker/](https://waha.devlike.pro/blog/waha-on-docker/)
+
+2. **Initialize WAHA credentials** (generates API key + dashboard password):
+   ```bash
+   docker compose run --no-deps -v "$(pwd)":/app/env waha init-waha /app/env
+   ```
+   This creates credentials in a `.env` file inside WAHA's directory:
+   - **Dashboard**: `http://localhost:3000/dashboard` (login with `admin / <password>`)
+   - **API Key**: Copy the `WAHA_API_KEY` from the generated `.env`
+
+3. **Start WAHA**:
+   ```bash
+   docker compose up -d
+   ```
+
+4. **Open the dashboard** at [http://localhost:3000/dashboard](http://localhost:3000/dashboard), enter your API key, then scan the QR code with WhatsApp on your phone to link your account.
+
+5. **Configure Morning Mailer's `.env`** with the WAHA credentials:
+   ```bash
+   WAHA_API_URL=http://waha:3000          # WAHA server URL (use container name if in same compose network)
+   WAHA_API_KEY=your-api-key-here         # From WAHA's .env file
+   WAHA_SESSION=default                   # Session name (default: "default")
+   ```
+
+6. **Add `mobile`** field to each user in `users.json` (country code + number, no `+`):
+   ```json
+   { "name": "Paras", "mobile": "919418168860", "use_whatsapp": true }
+   ```
+
+7. **Done!** The WhatsApp task runs on the same schedule as email but uses separate Redis tracking keys, so both delivery channels operate independently.
+
+For detailed WAHA setup (Nginx, HTTPS, production hardening), see the [WAHA on Docker guide](https://waha.devlike.pro/blog/waha-on-docker/).
 
 ## Manual Testing
 

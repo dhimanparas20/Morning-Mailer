@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Morning Mailer is an AI-powered **multi-user** email summarization system that automatically fetches emails from multiple Gmail accounts at scheduled times, generates beautiful HTML summaries using Large Language Models, and emails them to each user.
+Morning Mailer is an AI-powered **multi-user** email summarization system that automatically fetches emails from multiple Gmail accounts at scheduled times, generates summaries using Large Language Models, and delivers them via email (HTML) and/or WhatsApp (plain text) to each user.
 
 ## Architecture
 
@@ -18,11 +18,11 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
           │              └─────────────┘
           ▼
     ┌──────────────────────────────────────┐
-    │         Email Summary Output         │
-    │  - Simple, sober HTML summaries       │
-    │  - Per-user scheduling                │
-    │  - Color-coded sections              │
-    │  - Sent via SMTP to each user        │
+    │         Summary Output               │
+    │  - HTML summaries via SMTP email     │
+    │  - Plain text via WhatsApp (WAHA)    │
+    │  - Per-user channel toggles          │
+    │  - Color-coded sections (email)      │
     └──────────────────────────────────────┘
 ```
 
@@ -34,6 +34,8 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 4. **Smart Fallbacks**: Global defaults when per-user settings not specified
 5. **Token Management**: Single OAuth credentials + multiple tokens
 6. **DEV/PROD Mode**: DEV = run multiple times/day, PROD = run once/day
+7. **WhatsApp Integration**: Send summaries via WhatsApp using WAHA API
+8. **Per-Channel Toggles**: `use_email` and `use_whatsapp` per-user booleans
 
 ## Core Components
 
@@ -42,19 +44,22 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 - **Key Functions**:
   - `load_users()`: Loads active users from users.json with .env fallback
   - `get_user_settings(user)`: Gets per-user max_email_results & days_threshold
-  - `should_run_today(user, global_schedule_time)`: Checks if user's schedule time has passed today
+  - `should_run_today(user, global_schedule_time, redis_prefix="")`: Checks if user's schedule time has passed today (redis_prefix isolates email vs WhatsApp tracking)
   - `get_user_last_run_date(keyword)`: Gets last processed date from Redis
   - `set_user_last_run_date(keyword, date_str)`: Updates last processed date in Redis
   - `fetch_emails_with_retry(keyword, max_results, days_threshold)`: Fetches with per-user settings
   - `process_user(user, global_schedule_time)`: Full pipeline for one user
   - `send_email(to, subject, body, is_html, smtp_user, smtp_password)`: Sends via SMTP
-  - `daily_email_summary()`: Huey periodic task - runs every SCHEDULE_CHECK_INTERVAL minutes
+  - `send_whatsapp(mobile, text)`: Sends WhatsApp via WAHA API
+  - `daily_email_summary()`: Huey periodic task - runs every SCHEDULE_CHECK_INTERVAL minutes (email delivery)
+  - `daily_whatsapp_summary()`: Huey periodic task - WhatsApp delivery (separate Redis tracking, respects use_whatsapp)
 
 - **Scheduling Logic**:
   - Task runs every N minutes (SCHEDULE_CHECK_INTERVAL, default: 5)
   - For each user, checks if current time >= user's schedule_time
-  - Tracks processed users in Redis (key: `morning_mailer:last_run:<keyword>`)
-  - Only processes users who haven't run today and whose time has passed
+  - Email task tracks processed in Redis (key: `morning_mailer:last_run:<keyword>`)
+  - WhatsApp task tracks separately (key: `morning_mailer:whatsapp_last_run:<keyword>`)
+  - `use_email` / `use_whatsapp` per-user booleans control which channel runs
 
 ### 2. modules/fetch_emails.py - Gmail Integration
 - **Purpose**: Handles all Gmail API interactions
@@ -101,22 +106,28 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 
 - **Supported Providers**: nvidia, openai, groq, openrouter, google
 
-### 4. modules/prompt.py - Simple HTML Template
-- **Purpose**: Defines LLM output format (simple, sober HTML)
+### 4. modules/prompt.py - Prompt Templates
+- **Purpose**: Defines LLM output format for both email and WhatsApp
+- **Variables**:
+  - `EMAIL_SYSTEM_PROMPT`: HTML summary format with inline CSS
+  - `WHATSAPP_SYSTEM_PROMPT`: Plain-text WhatsApp format with *bold*, _italic_, emoji markers
+  - `SYSTEM_PROMPT`: Backward-compat alias for EMAIL_SYSTEM_PROMPT
 - **Features**:
-  - Clean, minimal layout with inline CSS
-  - Light gray background (#f5f5f5)
+  - Clean, minimal layout with inline CSS (email)
   - Color-coded sections (red=critical, green=important, blue=info)
-  - Simple table structure for fast AI generation
+  - WhatsApp-compatible formatting (bold, italic, emojis, bullets)
   - Minimal token usage for cost efficiency
 
 ### 5. modules/ipython_startup.py - Magic Functions
 - **Available Magic Functions**:
   - `%daily_email_summary`: Trigger the task
+  - `%daily_whatsapp_summary`: Trigger WhatsApp summary task
   - `%check_job_status <job_id>`: Check Huey job
   - `%setup_oauth <keyword>`: Generate new token
   - `%check_tokens`: Show token status for all users
   - `%send_test_email <subject> <body>`: Test SMTP
+  - `%send_test_whatsapp <mobile> <message>`: Test WhatsApp message
+  - `%summarize_whatsapp <keyword>`: Fetch & summarize in WhatsApp format
   - `%redis_status`: Check Redis connection
   - `%cls`: Clear terminal
 
@@ -190,11 +201,14 @@ Morning-Mailer/
     "email": "dhimanparas20@gmail.com",
     "keyword": "dhimanparas20",
     "active": true,
+    "use_email": true,
+    "use_whatsapp": true,
     "max_email_results": 20,      // optional, falls back to .env
     "days_threshold": 2,            // optional, falls back to .env
     "schedule_time": "08:00",       // optional, falls back to .env SCHEDULE_TIME
     "smtp_host_user": "user@gmail.com",   // optional, falls back to .env
-    "smtp_host_password": "xxxx"           // optional, falls back to .env
+    "smtp_host_password": "xxxx",          // optional, falls back to .env
+    "mobile": "919418168860"               // WhatsApp number (country code, no +)
   }
 ]
 ```
@@ -206,11 +220,14 @@ Morning-Mailer/
 | `email` | Yes | - | Where to send summary |
 | `keyword` | Yes | - | Links to token_<keyword>.json |
 | `active` | No | true | If false, user is skipped |
+| `use_email` | No | true | Enable/disable email delivery |
+| `use_whatsapp` | No | true | Enable/disable WhatsApp delivery |
 | `max_email_results` | No | .env MAX_EMAIL_RESULTS | Max emails to fetch |
 | `days_threshold` | No | .env DAYS_THRESHOLD | Days to look back |
 | `schedule_time` | No | .env SCHEDULE_TIME | When to run (HH:MM) |
 | `smtp_host_user` | No | .env EMAIL_HOST_USER | Custom SMTP sender |
 | `smtp_host_password` | No | .env EMAIL_HOST_PASSWORD | Custom SMTP password |
+| `mobile` | No | - | WhatsApp number with country code |
 
 ### Scheduling Logic:
 - Task runs every SCHEDULE_CHECK_INTERVAL minutes (default: 5)
@@ -244,6 +261,9 @@ Morning-Mailer/
 | `EMAIL_HOST_USER` | Fallback SMTP username | (your email) |
 | `EMAIL_HOST_PASSWORD` | Fallback SMTP password | (app password) |
 | `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth (e.g., ngrok tunnel) | - |
+| `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
+| `WAHA_API_KEY` | WAHA API key | - |
+| `WAHA_SESSION` | WAHA session name | default |
 
 ## Token Setup
 
@@ -311,11 +331,14 @@ In IPython (`docker compose exec huey uv run ipython`):
 | Magic | Usage | Description |
 |-------|-------|-------------|
 | `%daily_email_summary` | `%daily_email_summary` | Trigger the scheduled task |
+| `%daily_whatsapp_summary` | `%daily_whatsapp_summary` | Trigger WhatsApp summary task |
 | `%check_job_status` | `%check_job_status <job_id>` | Check Huey job status |
 | `%setup_oauth` | `%setup_oauth <keyword>` | Generate new token (desktop) |
 | `%setup_web_oauth` | `%setup_web_oauth <keyword>` | Generate new token (web app) |
 | `%check_tokens` | `%check_tokens` | Show all users' token status |
 | `%send_test_email` | `%send_test_email <subject> <body>` | Send test email |
+| `%send_test_whatsapp` | `%send_test_whatsapp <mobile> <message>` | Send test WhatsApp message |
+| `%summarize_whatsapp` | `%summarize_whatsapp <keyword>` | Fetch & summarize in WhatsApp format |
 | `%redis_status` | `%redis_status` | Check Redis connection |
 | `%clear_last_run` | `%clear_last_run [keyword\|all]` | Clear last run date (use in DEV mode) |
 | `%run_fetch` | `%run_fetch` | Direct fetch (no Huey) |
@@ -375,6 +398,8 @@ send_email("test@example.com", "Test Subject", "Hello!")
 - **langchain-google-genai**: Google Gemini
 - **loguru**: Logging
 - **redis**: Task queue backend (Upstash)
+- **requests**: HTTP client for WAHA WhatsApp API calls
+- **WAHA** ([waha.devlike.pro](https://waha.devlike.pro)): WhatsApp HTTP API (separate Docker container) — provides REST API at `http://waha:3000` for sending messages. Dashboard at `:3000/dashboard` for QR-based WhatsApp Web pairing. Setup guide: https://waha.devlike.pro/blog/waha-on-docker/
 
 ## Environment Setup Priority
 

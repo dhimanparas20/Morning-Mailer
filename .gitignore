@@ -33,3 +33,4 @@ users.json
 # OS
 .DS_Store
 Thumbs.dbgauth/client_secret_web.json
+sessions

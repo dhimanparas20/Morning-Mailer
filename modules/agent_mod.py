@@ -34,7 +34,7 @@ class AgentModule:
             max_tokens=tokens,
         )
 
-    def summarize_emails(self, emails: list[dict[str, Any]], prompt: Optional[str] = None) -> str:
+    def summarize_emails(self, emails: list[dict[str, Any]], prompt: Optional[str] = None, user_name: Optional[str] = None) -> str:
         """Summarize emails using LLM"""
         if self.llm is None:
             self.init()
@@ -42,6 +42,8 @@ class AgentModule:
         email_json = str(emails)
         if not prompt:
             prompt = SYSTEM_PROMPT
+        if user_name:
+            prompt = prompt.replace("{USER_NAME}", user_name)
         user_message = f"{prompt}\n\nHere are the emails to summarize:\n\n{email_json}"
 
         logger.info(f"Summarizing {len(emails)} emails...")

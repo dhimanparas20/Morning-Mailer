@@ -1,4 +1,32 @@
 services:
+  waha:
+    container_name: waha
+    restart: always
+    image: devlikeapro/waha
+
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '100m'
+        max-file: '10'
+
+    ports:
+      - '3000:3000/tcp'
+
+    networks:
+      - app-network
+
+    volumes:
+      # Store sessions in the .sessions folder (comment it if you're using MongoDB)
+#      - './sessions:/app/.sessions'
+
+      # Save media files
+      # https://waha.devlike.pro/docs/how-to/storages/#save-media-files-between-the-container-restarts
+      - './media:/app/.media'
+
+    env_file:
+      - .env
+
   valkey:
     image: docker.io/bitnami/valkey:latest
     container_name: valkey
