@@ -504,8 +504,7 @@ def daily_whatsapp_summary() -> dict[str, Any]:
 
     logger.info(f"Found {len(eligible_users)} WhatsApp user(s) eligible at {current_time_str}")
 
-    results = []
-    for user in eligible_users:
+    def process_whatsapp_user(user: dict[str, Any]) -> dict[str, Any]:
         keyword = user.get("keyword", "default")
         user_name = user.get("name", "Unknown")
         mobile = user.get("mobile", "")
@@ -513,15 +512,13 @@ def daily_whatsapp_summary() -> dict[str, Any]:
 
         if not has_valid_token(keyword):
             logger.warning(f"[{keyword}] WhatsApp: OAuth token not found, skipping")
-            results.append({"keyword": keyword, "name": user_name, "mobile": mobile, "error": "OAuth token missing"})
-            continue
+            return {"keyword": keyword, "name": user_name, "mobile": mobile, "error": "OAuth token missing"}
 
         result = fetch_emails_with_retry(keyword, max_results, days_threshold)
         emails_fetched = result.get("count", 0) if result.get("success") else 0
 
         if not result["success"] or not result["emails"]:
-            results.append({"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched})
-            continue
+            return {"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched}
 
         summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
 
@@ -531,10 +528,21 @@ def daily_whatsapp_summary() -> dict[str, Any]:
             redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
             redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user_schedule)
             logger.success(f"[{keyword}] WhatsApp summary sent to {mobile}")
-            results.append({"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched})
+            return {"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched}
         except Exception as e:
             logger.error(f"[{keyword}] WhatsApp send failed: {e}")
-            results.append({"keyword": keyword, "name": user_name, "mobile": mobile, "error": str(e)})
+            return {"keyword": keyword, "name": user_name, "mobile": mobile, "error": str(e)}
+
+    results = []
+    with ThreadPoolExecutor(max_workers=min(MAX_THREAD_WORKERS, len(eligible_users))) as executor:
+        futures = {executor.submit(process_whatsapp_user, user): user for user in eligible_users}
+        for future in as_completed(futures):
+            try:
+                user_result = future.result()
+                results.append(user_result)
+            except Exception as e:
+                logger.error(f"Error processing WhatsApp user: {e}")
+                results.append({"error": str(e)})
 
     total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
     logger.info(f"WhatsApp scheduled task completed: {len(results)} user(s) processed, {total_emails} emails")
