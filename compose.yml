@@ -55,7 +55,7 @@ services:
       - ./tasks.py:/app/tasks.py
       - ./gauth:/app/gauth
       - ./users.json:/app/users.json
-    command: uv run huey_consumer tasks.huey -k thread -w 2 --flush-locks info
+    command: uv run huey_consumer tasks.huey -k thread -w 1 --flush-locks info
     depends_on:
       valkey:
         condition: service_healthy
