@@ -26,7 +26,7 @@ TOKENS_DIR = BASE_DIR / "tokens"
 
 CREDENTIALS_FILE = BASE_DIR / "client_secret.json"
 
-logger = get_logger("[fetch_gmail]", show_time=False)
+logger = get_logger("[fetch_emails]", show_time=False)
 
 
 def get_credentials_path() -> Path:
