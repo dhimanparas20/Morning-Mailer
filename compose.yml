@@ -4,8 +4,6 @@ services:
     container_name: valkey
     environment:
       ALLOW_EMPTY_PASSWORD: "yes"
-    ports:
-      - "6380:6379"
     command:
       - /opt/bitnami/scripts/valkey/run.sh
       # Load the JSON module
