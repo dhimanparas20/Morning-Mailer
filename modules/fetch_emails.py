@@ -26,7 +26,7 @@ TOKENS_DIR = BASE_DIR / "tokens"
 
 CREDENTIALS_FILE = BASE_DIR / "client_secret.json"
 
-logger = get_logger("[fetch_gmail]", show_time=True)
+logger = get_logger("[fetch_gmail]", show_time=False)
 
 
 def get_credentials_path() -> Path:
@@ -191,7 +191,7 @@ def fetch_emails(
     }
 
     try:
-        logger = get_logger(f"[fetch_gmail:{keyword}]", show_time=True)
+        int_logger = get_logger(f"[fetch_gmail:{keyword}]", show_time=False)
         service = get_gmail_service(keyword)
 
         gmail_query_parts = [query] if query else []
@@ -203,7 +203,7 @@ def fetch_emails(
             gmail_query_parts.append("has:attachment")
 
         combined_query = " ".join(filter(None, gmail_query_parts))
-        logger.info(f"Fetching up to {max_results} emails" + (f" | query: {combined_query}" if combined_query else ""))
+        int_logger.info(f"Fetching up to {max_results} emails" + (f" | query: {combined_query}" if combined_query else ""))
 
         response = service.users().messages().list(
             userId="me",
@@ -214,7 +214,7 @@ def fetch_emails(
         messages = response.get("messages", [])
 
         if not messages:
-            logger.warning("No emails found matching the query")
+            int_logger.warning("No emails found matching the query")
             result["success"] = True
             result["count"] = 0
             result["filters_applied"] = {
@@ -230,7 +230,7 @@ def fetch_emails(
             }
             return result
 
-        logger.info(f"Retrieved {len(messages)} email(s), fetching details in parallel...")
+        int_logger.info(f"Retrieved {len(messages)} email(s), fetching details in parallel...")
 
         def fetch_single_email(msg_ref: dict) -> dict | None:
             try:
@@ -265,10 +265,10 @@ def fetch_emails(
                     ),
                 }
             except HttpError as e:
-                logger.error(f"HTTP error fetching email {msg_ref['id']}: {e}")
+                int_logger.error(f"HTTP error fetching email {msg_ref['id']}: {e}")
                 return None
             except Exception as e:
-                logger.error(f"Unexpected error processing email {msg_ref['id']}: {e}")
+                int_logger.error(f"Unexpected error processing email {msg_ref['id']}: {e}")
                 return None
 
         max_workers = min(5, len(messages))
@@ -290,7 +290,7 @@ def fetch_emails(
                 e for e in result["emails"]
                 if e["date_parsed"] and datetime.fromisoformat(e["date_parsed"]).timestamp() >= date_from_ts
             ]
-            logger.info(f"Filtered by date_from={date_from_hr}: {before} -> {len(result['emails'])}")
+            int_logger.info(f"Filtered by date_from={date_from_hr}: {before} -> {len(result['emails'])}")
 
         if date_to:
             date_to_ts = datetime.fromisoformat(date_to).timestamp()
@@ -300,13 +300,13 @@ def fetch_emails(
                 e for e in result["emails"]
                 if e["date_parsed"] and datetime.fromisoformat(e["date_parsed"]).timestamp() <= date_to_ts
             ]
-            logger.info(f"Filtered by date_to={date_to_hr}: {before} -> {len(result['emails'])}")
+            int_logger.info(f"Filtered by date_to={date_to_hr}: {before} -> {len(result['emails'])}")
 
         if subject_contains:
             before = len(result["emails"])
             subject_lower = subject_contains.lower()
             result["emails"] = [e for e in result["emails"] if subject_lower in e["subject"].lower()]
-            logger.info(f"Filtered by subject containing '{subject_contains}': {before} -> {len(result['emails'])}")
+            int_logger.info(f"Filtered by subject containing '{subject_contains}': {before} -> {len(result['emails'])}")
 
         sort_valid = {"date", "from_addr", "subject"}
         if sort_by not in sort_valid:
@@ -333,7 +333,7 @@ def fetch_emails(
             "sort_by": sort_by,
             "sort_order": sort_order,
         }
-        logger.success(f"Completed. {result['count']} email(s) returned")
+        int_logger.success(f"Completed. {result['count']} email(s) returned")
 
         return result
 

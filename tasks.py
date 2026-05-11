@@ -33,7 +33,7 @@ import redis
 console = Console()
 
 load_dotenv()
-logger = get_logger(__name__, show_time=True)
+logger = get_logger(__name__, show_time=False)
 
 # Huey instance for task queue
 huey = RedisHuey("Morning Mailer", url=os.getenv("REDIS_URL"), utc=False)

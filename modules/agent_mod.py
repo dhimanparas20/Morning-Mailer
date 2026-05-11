@@ -9,7 +9,7 @@ from modules.prompt import SYSTEM_PROMPT
 
 load_dotenv()
 
-logger = get_logger("[agent]", show_time=True)
+logger = get_logger("[agent]", show_time=False)
 
 
 class AgentModule:
