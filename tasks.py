@@ -367,6 +367,65 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
     }
 
 
+def _process_user_both_channels(
+    user: dict[str, Any],
+    needs_email: bool,
+    needs_whatsapp: bool,
+    today_str: str,
+    global_schedule_time: str,
+) -> dict[str, Any]:
+    """Process a user for both email and WhatsApp channels. Fetches emails once."""
+    keyword = user.get("keyword", "default")
+    user_name = user.get("name", "Unknown")
+    user_email = user.get("email", "")
+    mobile = user.get("mobile", "")
+    smtp_user = user.get("smtp_host_user")
+    smtp_password = user.get("smtp_host_password")
+    max_results, days_threshold = get_user_settings(user)
+
+    if not has_valid_token(keyword):
+        logger.warning(f"[{keyword}] OAuth token not found, skipping")
+        return {"keyword": keyword, "name": user_name, "emails_fetched": 0, "error": "OAuth token missing"}
+
+    result = fetch_emails_with_retry(keyword, max_results, days_threshold)
+    emails_fetched = result.get("count", 0) if result.get("success") else 0
+
+    if not result["success"] or not result["emails"]:
+        return {"keyword": keyword, "name": user_name, "emails_fetched": 0}
+
+    user_schedule = user.get("schedule_time", global_schedule_time)
+
+    if needs_email:
+        try:
+            email_summary = AGENT.summarize_emails(result["emails"], user_name=user_name)
+            send_email(
+                to=user_email,
+                subject=f"Daily Email Summary - {user_name}",
+                body=email_summary,
+                is_html=True,
+                smtp_user=smtp_user,
+                smtp_password=smtp_password,
+            )
+            set_user_last_run_date(keyword, today_str, user_schedule)
+            logger.success(f"[{keyword}] Email summary sent to {user_email}")
+        except Exception as e:
+            logger.error(f"[{keyword}] Email send failed: {e}")
+
+    if needs_whatsapp:
+        try:
+            whatsapp_summary = AGENT.summarize_emails(
+                result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name
+            )
+            send_whatsapp(mobile, whatsapp_summary)
+            redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
+            redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user_schedule)
+            logger.success(f"[{keyword}] WhatsApp summary sent to {mobile}")
+        except Exception as e:
+            logger.error(f"[{keyword}] WhatsApp send failed: {e}")
+
+    return {"keyword": keyword, "name": user_name, "emails_fetched": emails_fetched}
+
+
 # =============================================================================
 # Huey Tasks
 # =============================================================================
@@ -377,12 +436,11 @@ def send_email_task(to: str | list[str], subject: str, body: str, is_html: bool 
     return send_email(to, subject, body, is_html)
 
 
-@huey.periodic_task(crontab(minute=f"*/{SCHEDULE_CHECK_INTERVAL}"))
 def daily_email_summary() -> dict[str, Any]:
     """
-    Main scheduled task: Check and process users whose schedule_time has passed.
+    Check and process users whose schedule_time has passed for email delivery.
     
-    Runs every SCHEDULE_CHECK_INTERVAL minutes. For each user:
+    For each user:
     - Check if current time >= user's schedule_time (or global SCHEDULE_TIME)
     - Check if user hasn't been processed today
     - If yes, process that user in parallel
@@ -453,10 +511,9 @@ def send_whatsapp_task(mobile: str, text: str) -> str:
     return send_whatsapp(mobile, text)
 
 
-@huey.periodic_task(crontab(minute=f"*/{SCHEDULE_CHECK_INTERVAL}"))
 def daily_whatsapp_summary() -> dict[str, Any]:
     """
-    Scheduled task: Check and process users for WhatsApp summaries.
+    Check and process users for WhatsApp summaries.
 
     Runs every SCHEDULE_CHECK_INTERVAL minutes. For each user with a mobile:
     - Check if current time >= user's schedule_time (or global SCHEDULE_TIME)
@@ -551,6 +608,82 @@ def daily_whatsapp_summary() -> dict[str, Any]:
         "date": today_str,
         "time": now.strftime("%H:%M:%S"),
         "eligible_users": len(eligible_users),
+        "processed": len(results),
+        "total_emails_fetched": total_emails,
+        "results": results,
+    }
+
+
+@huey.periodic_task(crontab(minute=f"*/{SCHEDULE_CHECK_INTERVAL}"))
+def daily_summary() -> dict[str, Any]:
+    """Unified daily task: fetch emails once per user, deliver via email and/or WhatsApp."""
+    now = datetime.now()
+    current_time_str = now.strftime("%H:%M")
+    today_str = now.strftime("%Y-%m-%d")
+
+    logger.info(f"Checking schedule at {current_time_str}...")
+
+    users = load_users()
+
+    email_eligible: dict[str, dict[str, Any]] = {}
+    whatsapp_eligible: dict[str, dict[str, Any]] = {}
+
+    for user in users:
+        if not user.get("active", True):
+            continue
+        keyword = user.get("keyword", "default")
+
+        if user.get("use_email", True):
+            if should_run_today(user, SCHEDULE_TIME):
+                email_eligible[keyword] = user
+
+        if user.get("use_whatsapp", True) and user.get("mobile"):
+            if WAHA_API_KEY and should_run_today(user, SCHEDULE_TIME, redis_prefix="whatsapp_"):
+                whatsapp_eligible[keyword] = user
+
+    all_keywords = set(email_eligible.keys()) | set(whatsapp_eligible.keys())
+
+    if not all_keywords:
+        logger.info(f"No users eligible to run at {current_time_str}")
+        return {
+            "date": today_str,
+            "time": now.strftime("%H:%M:%S"),
+            "eligible_users": 0,
+            "processed": 0,
+        }
+
+    active_users_dict = {u.get("keyword", "default"): u for u in users}
+    eligible_list = []
+    for kw in all_keywords:
+        if kw in active_users_dict:
+            eligible_list.append((
+                active_users_dict[kw],
+                kw in email_eligible,
+                kw in whatsapp_eligible,
+            ))
+
+    logger.success(f"Found {len(eligible_list)} user(s) eligible at {current_time_str}")
+
+    results = []
+    with ThreadPoolExecutor(max_workers=min(MAX_THREAD_WORKERS, len(eligible_list))) as executor:
+        futures = {
+            executor.submit(_process_user_both_channels, user, needs_email, needs_whatsapp, today_str, SCHEDULE_TIME): user
+            for user, needs_email, needs_whatsapp in eligible_list
+        }
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as e:
+                logger.error(f"Error processing user: {e}")
+                results.append({"error": str(e)})
+
+    total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
+    logger.success(f"Daily summary completed: {len(results)} user(s) processed, {total_emails} emails")
+
+    return {
+        "date": today_str,
+        "time": now.strftime("%H:%M:%S"),
+        "eligible_users": len(eligible_list),
         "processed": len(results),
         "total_emails_fetched": total_emails,
         "results": results,

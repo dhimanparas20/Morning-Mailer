@@ -24,15 +24,15 @@ if ip is not None:
 
 @register_line_magic
 def daily_email_summary(line):
-    """Enqueue the daily email fetch and summarize task."""
+    """Trigger the daily email summary task (all users)."""
     from tasks import daily_email_summary, load_users
     users = load_users()
     for user in users:
         kw = user.get("keyword", "default")
         r.delete(f"morning_mailer:last_run:{kw}")
         r.delete(f"morning_mailer:last_schedule:{kw}")
-    job = daily_email_summary()
-    print(f"Job enqueued: {job.id}")
+    result = daily_email_summary()
+    print(f"Email summary completed: {result.get('processed', 0)} user(s) processed")
 
 
 @register_line_magic
@@ -178,15 +178,15 @@ def check_tokens(line):
 
 @register_line_magic
 def daily_whatsapp_summary(line):
-    """Enqueue the daily WhatsApp summary task."""
+    """Trigger the daily WhatsApp summary task (all users)."""
     from tasks import daily_whatsapp_summary, load_users
     users = load_users()
     for user in users:
         kw = user.get("keyword", "default")
         r.delete(f"morning_mailer:whatsapp_last_run:{kw}")
         r.delete(f"morning_mailer:whatsapp_last_schedule:{kw}")
-    job = daily_whatsapp_summary()
-    print(f"WhatsApp job enqueued: {job.id}")
+    result = daily_whatsapp_summary()
+    print(f"WhatsApp summary completed: {result.get('processed', 0)} user(s) processed")
 
 
 @register_line_magic

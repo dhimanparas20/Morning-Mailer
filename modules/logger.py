@@ -9,7 +9,7 @@ load_dotenv()
 _handler_configured = False
 
 ENV_MODE = os.getenv("ENV_MODE", "dev").lower()
-LOG_LEVEL = "DEBUG" if ENV_MODE == "dev" else "SUCCESS"
+LOG_LEVEL = "DEBUG" if ENV_MODE == "dev" else "INFO"
 
 
 def _setup_handler(show_time: bool) -> None:
