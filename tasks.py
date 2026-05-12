@@ -180,7 +180,7 @@ def load_users() -> list[dict[str, Any]]:
                 user["smtp_host_password"] = os.getenv("EMAIL_HOST_PASSWORD")
             active_users.append(user)
 
-    logger.info(f"Loaded {len(active_users)} active user(s) from users.json (from {len(users)} total)")
+    logger.success(f"Loaded {len(active_users)} active user(s) from users.json (from {len(users)} total)")
     return active_users
 
 
@@ -259,7 +259,7 @@ def send_email(
     if not smtp_user or not smtp_password:
         raise ValueError("SMTP credentials not configured. Set EMAIL_HOST_USER and EMAIL_HOST_PASSWORD in .env or users.json")
 
-    logger.info(f"[send_email] Sending email to {to}")
+    logger.debug(f"[send_email] Sending email to {to}")
 
     recipients = [to] if isinstance(to, str) else to
 
@@ -276,7 +276,7 @@ def send_email(
         server.login(smtp_user, smtp_password)
         server.sendmail(smtp_user, recipients, msg.as_string())
 
-    logger.info(f"[send_email] Email sent successfully to {recipients}")
+    logger.success(f"[send_email] Email sent successfully to {recipients}")
     return f"Email sent successfully to {recipients}"
 
 
@@ -297,7 +297,7 @@ def send_whatsapp(mobile: str, text: str) -> str:
         "text": text,
     }
 
-    logger.info(f"[send_whatsapp] Sending WhatsApp message to {chat_id}")
+    logger.debug(f"[send_whatsapp] Sending WhatsApp message to {chat_id}")
     response = requests.post(url, json=data, headers=headers, timeout=30)
     response.raise_for_status()
     logger.success(f"[send_whatsapp] WhatsApp message sent to {chat_id}")
@@ -323,7 +323,7 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
 
     max_results, days_threshold = get_user_settings(user)
 
-    logger.info(f"Processing user: {user_name} ({keyword})")
+    logger.success(f"Processing user: {user_name} ({keyword})")
 
     # Check if OAuth token exists, if not, skip user
     if not has_valid_token(keyword):
@@ -419,10 +419,10 @@ def daily_email_summary() -> dict[str, Any]:
             "processed": 0,
         }
 
-    logger.info(f"Found {len(eligible_users)} user(s) eligible to run at {current_time_str}")
+    logger.success(f"Found {len(eligible_users)} user(s) eligible to run at {current_time_str}")
 
     results = []
-    logger.info(f"Processing {len(eligible_users)} user(s) in parallel...")
+    logger.debug(f"Processing {len(eligible_users)} user(s) in parallel...")
     with ThreadPoolExecutor(max_workers=min(MAX_THREAD_WORKERS, len(eligible_users))) as executor:
         futures = {executor.submit(process_user, user, SCHEDULE_TIME): user for user in eligible_users}
         for future in as_completed(futures):
@@ -435,7 +435,7 @@ def daily_email_summary() -> dict[str, Any]:
 
     total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
 
-    logger.info(f"Scheduled task completed: {len(eligible_users)} user(s) processed, {total_emails} emails")
+    logger.success(f"Scheduled task completed: {len(eligible_users)} user(s) processed, {total_emails} emails")
 
     return {
         "date": today_str,
@@ -502,7 +502,7 @@ def daily_whatsapp_summary() -> dict[str, Any]:
             "processed": 0,
         }
 
-    logger.info(f"Found {len(eligible_users)} WhatsApp user(s) eligible at {current_time_str}")
+    logger.success(f"Found {len(eligible_users)} WhatsApp user(s) eligible at {current_time_str}")
 
     def process_whatsapp_user(user: dict[str, Any]) -> dict[str, Any]:
         keyword = user.get("keyword", "default")
@@ -545,7 +545,7 @@ def daily_whatsapp_summary() -> dict[str, Any]:
                 results.append({"error": str(e)})
 
     total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
-    logger.info(f"WhatsApp scheduled task completed: {len(results)} user(s) processed, {total_emails} emails")
+    logger.success(f"WhatsApp scheduled task completed: {len(results)} user(s) processed, {total_emails} emails")
 
     return {
         "date": today_str,
@@ -557,7 +557,7 @@ def daily_whatsapp_summary() -> dict[str, Any]:
     }
 
 
-logger.info(f"Scheduler: checking every {SCHEDULE_CHECK_INTERVAL} min, default time {SCHEDULE_TIME}, max_results {MAX_EMAIL_RESULTS}, days {DAYS_THRESHOLD}")
+logger.success(f"Scheduler: checking every {SCHEDULE_CHECK_INTERVAL} min, default time {SCHEDULE_TIME}, max_results {MAX_EMAIL_RESULTS}, days {DAYS_THRESHOLD}")
 
 
 def print_startup_summary():

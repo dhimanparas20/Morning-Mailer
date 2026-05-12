@@ -56,7 +56,7 @@ def get_gmail_service(keyword: str = "default") -> Any:
         creds_path = get_credentials_path()
 
         if token_path.exists():
-            logger.info(f"Loading credentials from {token_path}")
+            logger.debug(f"Loading credentials from {token_path}")
             creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
         if creds and creds.valid:
@@ -290,7 +290,7 @@ def fetch_emails(
                 e for e in result["emails"]
                 if e["date_parsed"] and datetime.fromisoformat(e["date_parsed"]).timestamp() >= date_from_ts
             ]
-            int_logger.info(f"Filtered by date_from={date_from_hr}: {before} -> {len(result['emails'])}")
+            int_logger.debug(f"Filtered by date_from={date_from_hr}: {before} -> {len(result['emails'])}")
 
         if date_to:
             date_to_ts = datetime.fromisoformat(date_to).timestamp()
@@ -300,7 +300,7 @@ def fetch_emails(
                 e for e in result["emails"]
                 if e["date_parsed"] and datetime.fromisoformat(e["date_parsed"]).timestamp() <= date_to_ts
             ]
-            int_logger.info(f"Filtered by date_to={date_to_hr}: {before} -> {len(result['emails'])}")
+            int_logger.debug(f"Filtered by date_to={date_to_hr}: {before} -> {len(result['emails'])}")
 
         if subject_contains:
             before = len(result["emails"])

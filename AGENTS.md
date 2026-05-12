@@ -33,7 +33,7 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 3. **Parallel Processing**: Users processed concurrently with ThreadPoolExecutor
 4. **Smart Fallbacks**: Global defaults when per-user settings not specified
 5. **Token Management**: Single OAuth credentials + multiple tokens
-6. **DEV/PROD Mode**: DEV = run multiple times/day, PROD = run once/day
+6. **DEV/PROD Mode**: DEV = run multiple times/day (verbose DEBUG logs), PROD = run once/day (quiet SUCCESS-level logs)
 7. **WhatsApp Integration**: Send summaries via WhatsApp using WAHA API
 8. **Per-Channel Toggles**: `use_email` and `use_whatsapp` per-user booleans
 
@@ -233,8 +233,8 @@ Morning-Mailer/
 - Task runs every SCHEDULE_CHECK_INTERVAL minutes (default: 5)
 - At each run, checks each user:
   - If current time >= user's schedule_time (or global SCHEDULE_TIME)
-  - If ENV_MODE=dev: always run (skip last_run check)
-  - If ENV_MODE=prod: only if hasn't run today (tracked in Redis)
+  - If ENV_MODE=dev: always run (skip last_run check) + verbose DEBUG logs
+  - If ENV_MODE=prod: only if hasn't run today (tracked in Redis) + quiet SUCCESS-level logs
   - THEN process that user in parallel
 - Each user runs once per day in PROD mode, multiple times in DEV mode
 - Users without schedule_time use global SCHEDULE_TIME from .env
@@ -257,7 +257,7 @@ Morning-Mailer/
 | `SCHEDULE_CHECK_INTERVAL` | Minutes between scheduler checks | 5 |
 | `RETRY_COUNT` | Retry attempts on failure | 2 |
 | `RETRY_DELAY` | Seconds between retries | 60 |
-| `ENV_MODE` | dev = run multiple times, prod = run once/day | dev |
+| `ENV_MODE` | dev = run multiple times + verbose logs, prod = run once/day + quiet logs | dev |
 | `EMAIL_HOST_USER` | Fallback SMTP username | (your email) |
 | `EMAIL_HOST_PASSWORD` | Fallback SMTP password | (app password) |
 | `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth (e.g., ngrok tunnel) | - |

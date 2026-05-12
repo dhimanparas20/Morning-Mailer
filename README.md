@@ -229,7 +229,7 @@ Morning-Mailer/
 | `RETRY_DELAY` | Seconds between retries | 60 |
 | `MODEL_PROVIDER` | LLM: nvidia/openai/groq/openrouter/google | openai |
 | `MODEL_TEMPERATURE` | AI creativity (0-1) | 0.5 |
-| `ENV_MODE` | dev/prod: dev = run multiple times, prod = run once/day | dev |
+| `ENV_MODE` | dev/prod: controls run frequency and log verbosity | dev |
 | `EMAIL_HOST_USER` | SMTP fallback username | - |
 | `EMAIL_HOST_PASSWORD` | SMTP fallback password | - |
 | `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth (e.g., ngrok tunnel) | - |
@@ -243,6 +243,15 @@ Morning-Mailer/
 - For each user, checks if current time >= user's schedule_time
 - If yes and hasn't run today → processes that user in parallel
 - Users without schedule_time use global SCHEDULE_TIME from .env
+
+### Environment Modes (`ENV_MODE`)
+
+| Mode | Run Frequency | Log Level | Description |
+|------|--------------|-----------|-------------|
+| `dev` | Multiple times/day | `DEBUG` (verbose) | Skips Redis last_run check — runs every SCHEDULE_CHECK_INTERVAL when schedule time has passed. Shows all debug/info logs for troubleshooting. |
+| `prod` | Once per day only | `SUCCESS` (quiet) | Enforces Redis last_run check — runs only once per day per user per channel. Only shows SUCCESS/WARNING/ERROR logs; suppresses repetitive credential loading, per-email debug lines, and intermediate info messages. |
+
+In `prod` mode, logs are kept minimal for production monitoring. In `dev` mode, full debug output is available for local development and testing.
 
 ### Per-User Settings
 
