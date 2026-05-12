@@ -24,6 +24,7 @@ from huey import RedisHuey, crontab
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich import box
 
 from modules import get_logger, format_timestamp
 from modules.fetch_emails import fetch_emails, load_users as load_email_users, get_token_path
@@ -32,7 +33,7 @@ from modules.prompt import WHATSAPP_SYSTEM_PROMPT
 
 import redis
 
-console = Console(width=200)
+console = Console()
 
 load_dotenv()
 logger = get_logger(__name__, show_time=False)
@@ -705,49 +706,48 @@ def print_startup_summary():
     scheduler_table = Table(title="[bold]Scheduler Configuration[/bold]", show_header=True, header_style="bold magenta")
     scheduler_table.add_column("Setting", style="cyan")
     scheduler_table.add_column("Value", style="green")
-    scheduler_table.add_row("Check Interval", f"{SCHEDULE_CHECK_INTERVAL} minutes")
-    scheduler_table.add_row("Default Time", SCHEDULE_TIME)
-    scheduler_table.add_row("Max Emails/User", str(MAX_EMAIL_RESULTS))
-    scheduler_table.add_row("Days Threshold", str(DAYS_THRESHOLD))
-    scheduler_table.add_row("Max Workers", str(MAX_THREAD_WORKERS))
-    scheduler_table.add_row("Retry Count", str(RETRY_COUNT))
-    scheduler_table.add_row("Retry Delay", f"{RETRY_DELAY}s")
-    scheduler_table.add_row("Env Mode", os.getenv("ENV_MODE", "dev").upper())
-    scheduler_table.add_row("WAHA URL", WAHA_API_URL)
-    scheduler_table.add_row("WAHA Session", WAHA_SESSION)
-    scheduler_table.add_row("WAHA Key", "*****" if WAHA_API_KEY else "(not set)")
+    scheduler_table.add_column("Description", style="dim")
+    scheduler_table.add_row("Check Interval", f"{SCHEDULE_CHECK_INTERVAL} minutes", "How often the scheduler checks for eligible users")
+    scheduler_table.add_row("Default Time", SCHEDULE_TIME, "Default run time for users without schedule_time")
+    scheduler_table.add_row("Max Emails/User", str(MAX_EMAIL_RESULTS), "Max emails fetched per user (default)")
+    scheduler_table.add_row("Days Threshold", str(DAYS_THRESHOLD), "Days to look back for emails (default)")
+    scheduler_table.add_row("Max Workers", str(MAX_THREAD_WORKERS), "Max parallel users processed at once")
+    scheduler_table.add_row("Retry Count", str(RETRY_COUNT), "Retry attempts on failure")
+    scheduler_table.add_row("Retry Delay", f"{RETRY_DELAY}s", "Seconds between retries")
+    scheduler_table.add_row("Env Mode", os.getenv("ENV_MODE", "dev").upper(), "dev=run multiple times, prod=once/day")
+    scheduler_table.add_row("WAHA URL", WAHA_API_URL, "WhatsApp HTTP API endpoint")
+    scheduler_table.add_row("WAHA Session", WAHA_SESSION, "WAHA session name")
+    scheduler_table.add_row("WAHA Key", "*****" if WAHA_API_KEY else "(not set)", "WAHA API key (masked)")
     console.print(scheduler_table)
 
     # Users Table
     users = load_users()
 
-    users_table = Table(title=f"[bold]Users ({len(users)} active)[/bold]", show_header=True, header_style="bold magenta")
-    users_table.add_column("#", style="dim", width=3)
-    users_table.add_column("Name", style="cyan", overflow="fold", min_width=12)
-    users_table.add_column("Email", style="yellow", overflow="fold", min_width=18)
+    users_table = Table(title=f"[bold]Users ({len(users)} active)[/bold]", show_header=True, header_style="bold magenta", box=box.SIMPLE)
+    users_table.add_column("Name", style="cyan", overflow="fold", min_width=10)
+    users_table.add_column("Email", style="yellow", overflow="fold", min_width=14)
     users_table.add_column("Keyword", style="green", no_wrap=True, min_width=10)
-    users_table.add_column("Schedule", style="magenta", no_wrap=True, width=8)
-    users_table.add_column("Max Emails", style="blue", justify="center", width=6)
-    users_table.add_column("Days", style="blue", justify="center", width=5)
+    users_table.add_column("Sch", style="magenta", width=6)
+    users_table.add_column("Max", style="blue", justify="center", width=4)
+    users_table.add_column("Days", style="blue", justify="center", width=4)
     users_table.add_column("Mobile", style="yellow", no_wrap=True, min_width=12)
-    users_table.add_column("Email?", style="green", justify="center", width=6)
-    users_table.add_column("WA?", style="green", justify="center", width=4)
-    users_table.add_column("Active", style="green", justify="center", width=6)
-    users_table.add_column("Token", style="red", justify="center", width=5)
+    users_table.add_column("Ch", style="green", justify="center", width=3)
+    users_table.add_column("Rdy", style="red", justify="center", width=3)
 
     for idx, user in enumerate(users, 1):
         keyword = user.get("keyword", "default")
         schedule = user.get("schedule_time", SCHEDULE_TIME)
         max_emails = user.get("max_email_results", MAX_EMAIL_RESULTS)
         days = user.get("days_threshold", DAYS_THRESHOLD)
-        active = "✓" if user.get("active", True) else "✗"
-        use_email = "✓" if user.get("use_email", True) else "✗"
-        use_whatsapp = "✓" if user.get("use_whatsapp", True) else "✗"
+        is_active = user.get("active", True)
+        has_token = has_valid_token(keyword)
+        ready = "✓" if (is_active and has_token) else "✗"
+        use_email = user.get("use_email", True)
+        use_whatsapp = user.get("use_whatsapp", True)
+        channels = ("E" if use_email else "-") + ("W" if use_whatsapp else "-")
         mobile = user.get("mobile", "-")
-        token_exists = "✓" if has_valid_token(keyword) else "✗"
 
         users_table.add_row(
-            str(idx),
             user.get("name", "Unknown"),
             user.get("email", "N/A"),
             keyword,
@@ -755,10 +755,8 @@ def print_startup_summary():
             str(max_emails),
             str(days),
             mobile,
-            use_email,
-            use_whatsapp,
-            active,
-            token_exists
+            channels,
+            ready
         )
 
     console.print(users_table)
