@@ -32,7 +32,7 @@ from modules.prompt import WHATSAPP_SYSTEM_PROMPT
 
 import redis
 
-console = Console()
+console = Console(width=200)
 
 load_dotenv()
 logger = get_logger(__name__, show_time=False)
@@ -723,17 +723,17 @@ def print_startup_summary():
 
     users_table = Table(title=f"[bold]Users ({len(users)} active)[/bold]", show_header=True, header_style="bold magenta")
     users_table.add_column("#", style="dim", width=3)
-    users_table.add_column("Name", style="cyan")
-    users_table.add_column("Email", style="yellow")
-    users_table.add_column("Keyword", style="green")
-    users_table.add_column("Schedule", style="magenta")
-    users_table.add_column("Max Emails", style="blue", justify="center")
-    users_table.add_column("Days", style="blue", justify="center")
-    users_table.add_column("Mobile", style="yellow")
-    users_table.add_column("Email?", style="green", justify="center")
-    users_table.add_column("WA?", style="green", justify="center")
-    users_table.add_column("Active", style="green", justify="center")
-    users_table.add_column("Token", style="red", justify="center")
+    users_table.add_column("Name", style="cyan", overflow="fold", min_width=12)
+    users_table.add_column("Email", style="yellow", overflow="fold", min_width=18)
+    users_table.add_column("Keyword", style="green", no_wrap=True, min_width=10)
+    users_table.add_column("Schedule", style="magenta", no_wrap=True, width=8)
+    users_table.add_column("Max Emails", style="blue", justify="center", width=6)
+    users_table.add_column("Days", style="blue", justify="center", width=5)
+    users_table.add_column("Mobile", style="yellow", no_wrap=True, min_width=12)
+    users_table.add_column("Email?", style="green", justify="center", width=6)
+    users_table.add_column("WA?", style="green", justify="center", width=4)
+    users_table.add_column("Active", style="green", justify="center", width=6)
+    users_table.add_column("Token", style="red", justify="center", width=5)
 
     for idx, user in enumerate(users, 1):
         keyword = user.get("keyword", "default")
