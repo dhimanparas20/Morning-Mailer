@@ -87,7 +87,7 @@ Create `users.json` with your users:
     "schedule_time": "08:00",
     "smtp_host_user": "your-email@gmail.com",
     "smtp_host_password": "your-app-password",
-    "mobile": "919418168860"
+    "mobile": "911234567890"
   },
   {
     "name": "Work",
