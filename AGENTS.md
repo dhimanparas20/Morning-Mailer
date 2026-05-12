@@ -120,8 +120,10 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 
 ### 5. modules/ipython_startup.py - Magic Functions
 - **Available Magic Functions**:
-  - `%daily_email_summary`: Trigger the task
-  - `%daily_whatsapp_summary`: Trigger WhatsApp summary task
+  - `%daily_email_summary`: Trigger the task (all users)
+  - `%daily_whatsapp_summary`: Trigger WhatsApp summary task (all users)
+  - `%send_email_summary <keyword|email>`: Send email summary to a specific user only
+  - `%send_whatsapp_summary <keyword|mobile>`: Send WhatsApp summary to a specific user only
   - `%check_job_status <job_id>`: Check Huey job
   - `%setup_oauth <keyword>`: Generate new token
   - `%check_tokens`: Show token status for all users
@@ -330,8 +332,10 @@ In IPython (`docker compose exec huey uv run ipython`):
 
 | Magic | Usage | Description |
 |-------|-------|-------------|
-| `%daily_email_summary` | `%daily_email_summary` | Trigger the scheduled task |
-| `%daily_whatsapp_summary` | `%daily_whatsapp_summary` | Trigger WhatsApp summary task |
+| `%daily_email_summary` | `%daily_email_summary` | Trigger the scheduled task (all users) |
+| `%daily_whatsapp_summary` | `%daily_whatsapp_summary` | Trigger WhatsApp summary task (all users) |
+| `%send_email_summary` | `%send_email_summary <keyword\|email>` | Send email summary to a specific user |
+| `%send_whatsapp_summary` | `%send_whatsapp_summary <keyword\|mobile>` | Send WhatsApp summary to a specific user |
 | `%check_job_status` | `%check_job_status <job_id>` | Check Huey job status |
 | `%setup_oauth` | `%setup_oauth <keyword>` | Generate new token (desktop) |
 | `%setup_web_oauth` | `%setup_web_oauth <keyword>` | Generate new token (web app) |

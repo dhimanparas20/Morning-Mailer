@@ -223,13 +223,107 @@ def summarize_whatsapp(line):
         print("No emails to summarize")
 
 
+def _find_user_by_identifier(users, identifier):
+    """Find a user by keyword, email, or mobile number."""
+    user = next((u for u in users if u.get("keyword") == identifier), None)
+    if user:
+        return user
+    user = next((u for u in users if u.get("email", "").lower() == identifier.lower()), None)
+    if user:
+        return user
+    user = next((u for u in users if u.get("mobile", "") == identifier), None)
+    return user
+
+
+@register_line_magic
+def send_email_summary(line):
+    """Fetch, summarize, and send email summary to a specific user. Usage: %send_email_summary <keyword|email>"""
+    identifier = line.strip()
+    if not identifier:
+        print("Usage: %send_email_summary <keyword|email>")
+        print("Examples:")
+        print("  %send_email_summary dhimanparas20")
+        print("  %send_email_summary user@gmail.com")
+        return
+    from tasks import load_users, process_user, SCHEDULE_TIME
+    users = load_users()
+    user = _find_user_by_identifier(users, identifier)
+    if not user:
+        print(f"[red]No active user found for: {identifier}[/red]")
+        print("Available users:")
+        for u in users:
+            print(f"  - {u.get('keyword')} | {u.get('email')} ({u.get('name')})")
+        return
+    keyword = user.get("keyword", "default")
+    r.delete(f"morning_mailer:last_run:{keyword}")
+    r.delete(f"morning_mailer:last_schedule:{keyword}")
+    print(f"[cyan]Processing email summary for: {user.get('name')} ({keyword})[/cyan]")
+    result = process_user(user, SCHEDULE_TIME)
+    if result.get("error"):
+        print(f"[red]Error: {result['error']}[/red]")
+    else:
+        print(f"[green]✓ Sent email summary to {result.get('email')} ({result.get('emails_fetched')} emails)[/green]")
+
+
+@register_line_magic
+def send_whatsapp_summary(line):
+    """Fetch, summarize, and send WhatsApp summary to a specific user. Usage: %send_whatsapp_summary <keyword|mobile>"""
+    identifier = line.strip()
+    if not identifier:
+        print("Usage: %send_whatsapp_summary <keyword|mobile>")
+        print("Examples:")
+        print("  %send_whatsapp_summary dhimanparas20")
+        print("  %send_whatsapp_summary 919418168860")
+        return
+    from tasks import load_users, fetch_emails_with_retry, get_user_settings, has_valid_token, send_whatsapp, AGENT, SCHEDULE_TIME, redis_client
+    from modules.prompt import WHATSAPP_SYSTEM_PROMPT
+    from datetime import datetime
+    users = load_users()
+    user = _find_user_by_identifier(users, identifier)
+    if not user:
+        print(f"[red]No active user found for: {identifier}[/red]")
+        print("Available users:")
+        for u in users:
+            print(f"  - {u.get('keyword')} | {u.get('mobile', 'no mobile')} ({u.get('name')})")
+        return
+    keyword = user.get("keyword", "default")
+    mobile = user.get("mobile", "")
+    if not mobile:
+        print(f"[red]User {user.get('name')} has no mobile number configured[/red]")
+        return
+    if not has_valid_token(keyword):
+        print(f"[red]OAuth token not found for {keyword}. Run: %setup_oauth {keyword}[/red]")
+        return
+    r.delete(f"morning_mailer:whatsapp_last_run:{keyword}")
+    r.delete(f"morning_mailer:whatsapp_last_schedule:{keyword}")
+    max_results, days_threshold = get_user_settings(user)
+    user_name = user.get("name", "Unknown")
+    print(f"[cyan]Processing WhatsApp summary for: {user_name} ({keyword})[/cyan]")
+    result = fetch_emails_with_retry(keyword, max_results, days_threshold)
+    if not result.get("success") or not result.get("emails"):
+        print("[yellow]No emails fetched, nothing to summarize[/yellow]")
+        return
+    summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
+    try:
+        send_whatsapp(mobile, summary)
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        user_schedule = user.get("schedule_time", SCHEDULE_TIME)
+        redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
+        redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user_schedule)
+        print(f"[green]✓ Sent WhatsApp summary to {mobile} ({result.get('count')} emails)[/green]")
+    except Exception as e:
+        print(f"[red]✗ WhatsApp send failed: {e}[/red]")
+
+
 print("[green]✓[/green] Morning Mailer magic functions loaded")
 
 console = Console()
 
 magics = [
-    ("%daily_email_summary", "", "Trigger the daily email summary task"),
-    ("%daily_whatsapp_summary", "", "Trigger the daily WhatsApp summary task"),
+    ("%daily_email_summary", "", "Trigger the daily email summary task (all users)"),
+    ("%daily_whatsapp_summary", "", "Trigger the daily WhatsApp summary task (all users)"),
+    ("%send_email_summary", "<keyword|email>", "Send email summary to a specific user"),
+    ("%send_whatsapp_summary", "<keyword|mobile>", "Send WhatsApp summary to a specific user"),
     ("%send_test_email", "<subject> <body>", "Send a test email"),
     ("%send_test_whatsapp", "<mobile> <message>", "Send a test WhatsApp message"),
     ("%summarize_whatsapp", "<keyword>", "Fetch & summarize in WhatsApp format"),

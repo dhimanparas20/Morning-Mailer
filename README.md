@@ -271,8 +271,10 @@ docker compose exec huey uv run ipython
 
 | Command | Description |
 |---------|-------------|
-| `%daily_email_summary` | Enqueue the daily email fetch task |
-| `%daily_whatsapp_summary` | Enqueue the daily WhatsApp summary task |
+| `%daily_email_summary` | Enqueue the daily email fetch task (all users) |
+| `%daily_whatsapp_summary` | Enqueue the daily WhatsApp summary task (all users) |
+| `%send_email_summary <keyword\|email>` | Send email summary to a specific user |
+| `%send_whatsapp_summary <keyword\|mobile>` | Send WhatsApp summary to a specific user |
 | `%check_job_status <job_id>` | Check status of a Huey job |
 | `%setup_oauth <keyword>` | Generate new OAuth token (desktop) |
 | `%setup_web_oauth <keyword>` | Generate new OAuth token (web app) |
