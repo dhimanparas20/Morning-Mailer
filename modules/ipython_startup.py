@@ -315,6 +315,178 @@ def send_whatsapp_summary(line):
         print(f"[red]✗ WhatsApp send failed: {e}[/red]")
 
 
+# ---- Redis user CRUD magics ----
+
+
+@register_line_magic
+def redis_users_list(line):
+    """List all users stored in Redis."""
+    from modules.redis_users import RedisUserManager
+    from rich.table import Table
+    mgr = RedisUserManager(r=r)
+    users = mgr.get_all()
+    if not users:
+        print("[yellow]No users found in Redis.[/yellow]")
+        return
+
+    table = Table(title=f"[bold]Redis Users ({len(users)})[/bold]", show_header=True,
+                  header_style="bold magenta", box=None)
+    table.add_column("Name", style="cyan")
+    table.add_column("Email", style="yellow")
+    table.add_column("Keyword", style="green")
+    table.add_column("Sch", style="magenta")
+    table.add_column("Max", style="blue", justify="center")
+    table.add_column("Days", style="blue", justify="center")
+    table.add_column("Mobile", style="yellow")
+    table.add_column("Ch", style="green", justify="center")
+    table.add_column("Rdy", style="red", justify="center")
+
+    for u in users:
+        use_e = u.get("use_email", True)
+        use_w = u.get("use_whatsapp", True)
+        ch = ("E" if use_e else "-") + ("W" if use_w else "-")
+        rdy = "✓" if u.get("active", True) else "✗"
+        table.add_row(
+            u.get("name", "?"), u.get("email", ""), u.get("keyword", ""),
+            u.get("schedule_time", "-"), str(u.get("max_email_results", "-")),
+            str(u.get("days_threshold", "-")), u.get("mobile", "-"),
+            ch, rdy,
+        )
+    console = Console()
+    console.print(table)
+
+
+@register_line_magic
+def redis_users_show(line):
+    """Show a single user's full details from Redis. Usage: %redis_users_show <keyword>"""
+    keyword = line.strip()
+    if not keyword:
+        print("Usage: %redis_users_show <keyword>")
+        return
+    from modules.redis_users import RedisUserManager
+    mgr = RedisUserManager(r=r)
+    user = mgr.get(keyword)
+    if not user:
+        print(f"[red]User '{keyword}' not found in Redis[/red]")
+        return
+    for f in ["name", "email", "keyword", "active", "use_email", "use_whatsapp",
+              "max_email_results", "days_threshold", "schedule_time",
+              "smtp_host_user", "smtp_host_password", "mobile"]:
+        val = user.get(f, "-")
+        if f == "smtp_host_password" and val:
+            val = "*****"
+        print(f"  [cyan]{f:<20}[/cyan] {val}")
+
+
+@register_line_magic
+def redis_users_add(line):
+    """Add a user to Redis. Usage: %redis_users_add --name X --email Y --keyword Z [--active true] ..."""
+    import shlex
+    try:
+        args_list = shlex.split(line)
+    except ValueError:
+        args_list = line.split()
+
+    from modules.redis_users import RedisUserManager
+    mgr = RedisUserManager(r=r)
+
+    # Parse key=value or --flag value
+    kwargs: dict = {}
+    i = 0
+    while i < len(args_list):
+        arg = args_list[i]
+        if arg.startswith("--"):
+            key = arg[2:].replace("-", "_")
+            if i + 1 < len(args_list) and not args_list[i + 1].startswith("--"):
+                i += 1
+                kwargs[key] = args_list[i]
+            else:
+                kwargs[key] = True
+        i += 1
+
+    if "keyword" not in kwargs:
+        print("[red]--keyword is required[/red]")
+        return
+    if "name" not in kwargs or "email" not in kwargs:
+        print("[red]--name and --email are required[/red]")
+        return
+
+    mgr.add_or_update(kwargs)
+    print(f"[green]✓ Added user '{kwargs['keyword']}'[/green]")
+
+
+@register_line_magic
+def redis_users_update(line):
+    """Update a user in Redis. Usage: %redis_users_update <keyword> --field value ..."""
+    import shlex
+    try:
+        args_list = shlex.split(line)
+    except ValueError:
+        args_list = line.split()
+    if not args_list or args_list[0].startswith("--"):
+        print("Usage: %redis_users_update <keyword> [--field value ...]")
+        return
+    keyword = args_list[0]
+    from modules.redis_users import RedisUserManager
+    mgr = RedisUserManager(r=r)
+    existing = mgr.get(keyword)
+    if not existing:
+        print(f"[red]User '{keyword}' not found in Redis[/red]")
+        return
+    kwargs = dict(existing)
+    i = 1
+    while i < len(args_list):
+        arg = args_list[i]
+        if arg.startswith("--"):
+            key = arg[2:].replace("-", "_")
+            if i + 1 < len(args_list) and not args_list[i + 1].startswith("--"):
+                i += 1
+                kwargs[key] = args_list[i]
+            else:
+                kwargs[key] = True
+        i += 1
+    mgr.add_or_update(kwargs)
+    print(f"[green]✓ Updated user '{keyword}'[/green]")
+
+
+@register_line_magic
+def redis_users_remove(line):
+    """Remove a user from Redis. Usage: %redis_users_remove <keyword>"""
+    keyword = line.strip()
+    if not keyword:
+        print("Usage: %redis_users_remove <keyword>")
+        return
+    from modules.redis_users import RedisUserManager
+    mgr = RedisUserManager(r=r)
+    if mgr.delete(keyword):
+        print(f"[green]✓ Removed user '{keyword}'[/green]")
+    else:
+        print(f"[red]User '{keyword}' not found in Redis[/red]")
+
+
+@register_line_magic
+def redis_users_import(line):
+    """Import users from users.json into Redis. Usage: %redis_users_import [file.json]"""
+    path = line.strip() or "users.json"
+    from modules.redis_users import RedisUserManager
+    mgr = RedisUserManager(r=r)
+    n = mgr.import_from_json(path)
+    if n > 0:
+        print(f"[green]✓ Imported {n} user(s) from {path}[/green]")
+    else:
+        print(f"[yellow]No users imported from {path}[/yellow]")
+
+
+@register_line_magic
+def redis_users_export(line):
+    """Export Redis users to a JSON file. Usage: %redis_users_export [file.json]"""
+    path = line.strip() or "users.json"
+    from modules.redis_users import RedisUserManager
+    mgr = RedisUserManager(r=r)
+    n = mgr.export_to_json(path)
+    print(f"[green]✓ Exported {n} user(s) to {path}[/green]")
+
+
 print("[green]✓[/green] Morning Mailer magic functions loaded")
 
 console = Console()
@@ -334,6 +506,13 @@ magics = [
     ("%setup_web_oauth", "<keyword>", "OAuth token setup (web app)"),
     ("%check_tokens", "", "Show token status for all users"),
     ("%redis_status", "", "Check Redis connection health"),
+    ("%redis_users_list", "", "List all users stored in Redis"),
+    ("%redis_users_show", "<keyword>", "Show one user's details from Redis"),
+    ("%redis_users_add", "--name X --email Y --keyword Z ...", "Add a user to Redis"),
+    ("%redis_users_update", "<keyword> --field value ...", "Update a user in Redis"),
+    ("%redis_users_remove", "<keyword>", "Remove a user from Redis"),
+    ("%redis_users_import", "[file.json]", "Import users from JSON file to Redis"),
+    ("%redis_users_export", "[file.json]", "Export Redis users to JSON file"),
     ("%clear_last_run", "[keyword|all]", "Clear last run tracking in Redis"),
     ("%cls", "", "Clear terminal screen"),
 ]

@@ -85,18 +85,26 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 - **Parallel Fetching**: Uses ThreadPoolExecutor for thread-safe email fetching
 
 ### 2.1 modules/web_auth.py - Web OAuth Setup
-- **Purpose**: Alternative OAuth using web app credentials with local callback server
-- **Key Features**:
-  - Starts local HTTP server to handle OAuth callback
-  - Opens browser automatically for authentication
-  - Works with Web OAuth credentials (client_secret_web.json)
-  - Falls back to desktop credentials if web not available
-- **Usage**:
-  ```bash
-  uv run python -m modules.web_auth <keyword>
-  # or in IPython:
-  %setup_web_oauth <keyword>
-  ```
+
+### 2.2 modules/redis_users.py - Redis User Storage
+- **Purpose**: Store and manage users as Redis hashes (alternative to users.json)
+- **Key Pattern**: `USERS_CONFIG:<keyword>` — each user is a Redis hash, keywords tracked in `USERS_CONFIG:keywords` SET
+- **Key Classes**:
+  - `RedisUserManager(r)`: Full CRUD with pipelined bulk reads/writes
+- **Key Methods**:
+  - `add_or_update(user_dict)`: Insert or replace a user hash
+  - `get(keyword)`: HGETALL → typed Python dict
+  - `get_all()`: SMEMBERS + pipelined HGETALL → list of dicts
+  - `delete(keyword)`: Remove hash + keyword from index set
+  - `activate(keyword)` / `deactivate(keyword)`: Toggle active field
+  - `import_from_json(path)`: Bulk-import from users.json
+  - `export_to_json(path)`: Bulk-export to users.json
+  - `clear_all()`: Delete all users from Redis
+  - `count()` / `exists(keyword)`: Cardinality checkers
+- **Type Handling**: Bools stored as `1`/`0`, ints as strings, rehydrated on read
+- **CLI Tool**: `cli_users.py` (argparse + Rich tables) — list, show, add, update, remove, activate, deactivate, import, export, clear
+- **IPython Magics**: `%redis_users_list`, `%redis_users_show`, `%redis_users_add`, `%redis_users_update`, `%redis_users_remove`, `%redis_users_import`, `%redis_users_export`
+- **Fallback**: `tasks.load_users()` tries Redis first; if empty/error, falls back to `users.json` → `.env` defaults
 
 ### 3. modules/agent_mod.py - LLM Integration
 - **Purpose**: Wrapper for LLM summarization
@@ -131,6 +139,13 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
   - `%send_test_whatsapp <mobile> <message>`: Test WhatsApp message
   - `%summarize_whatsapp <keyword>`: Fetch & summarize in WhatsApp format
   - `%redis_status`: Check Redis connection
+  - `%redis_users_list`: List all users in Redis
+  - `%redis_users_show <keyword>`: Show one user's details
+  - `%redis_users_add --name X --email Y --keyword Z ...`: Add user to Redis
+  - `%redis_users_update <keyword> --field value ...`: Update user in Redis
+  - `%redis_users_remove <keyword>`: Remove user from Redis
+  - `%redis_users_import [file]`: Import users.json into Redis
+  - `%redis_users_export [file]`: Export Redis users to JSON
   - `%cls`: Clear terminal
 
 ## Data Flow
@@ -177,7 +192,9 @@ Morning-Mailer/
 │   ├── prompt.py               # Simple HTML template
 │   ├── logger.py              # Logging
 │   ├── generics.py            # Utilities
+│   ├── redis_users.py         # Redis user storage & CRUD
 │   └── ipython_startup.py     # IPython magic functions
+├── cli_users.py                # CLI for Redis user management
 ├── gauth/
 │   ├── client_secret.json      # Single OAuth credentials (shared)
 │   └── tokens/                 # One token per user

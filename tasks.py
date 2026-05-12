@@ -142,7 +142,27 @@ def get_job_status(job_id: str) -> dict:
 
 
 def load_users() -> list[dict[str, Any]]:
-    """Load users from users.json, fallback to .env for single user. Only active users are returned."""
+    """Load active users — tries Redis first, falls back to users.json, then .env."""
+    # 1. Try Redis ----------------------------------------------------------------
+    try:
+        from modules.redis_users import RedisUserManager
+        mgr = RedisUserManager(r=redis_client)
+        redis_users = mgr.get_all()
+        if redis_users:
+            active_users = []
+            for user in redis_users:
+                if user.get("active", True):
+                    if not user.get("smtp_host_user"):
+                        user["smtp_host_user"] = os.getenv("EMAIL_HOST_USER")
+                    if not user.get("smtp_host_password"):
+                        user["smtp_host_password"] = os.getenv("EMAIL_HOST_PASSWORD")
+                    active_users.append(user)
+            logger.success(f"Loaded {len(active_users)} active user(s) from Redis (from {len(redis_users)} total)")
+            return active_users
+    except Exception as exc:
+        logger.debug("Redis user lookup skipped: %s", exc)
+
+    # 2. Fall back to users.json -------------------------------------------------
     users_file = Path("users.json")
 
     if not users_file.exists():
@@ -173,7 +193,6 @@ def load_users() -> list[dict[str, Any]]:
     # Fill in missing SMTP credentials from .env fallback and filter active users
     active_users = []
     for user in users:
-        # Default active to True if not specified
         if user.get("active", True):
             if not user.get("smtp_host_user"):
                 user["smtp_host_user"] = os.getenv("EMAIL_HOST_USER")
