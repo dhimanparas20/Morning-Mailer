@@ -14,7 +14,7 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
           │                      │              └─────────────┘
           │              ┌──────┴──────┐
           │              │   Redis      │
-          │              │ (Upstash)   │
+           │              │ (Valkey)   │
           │              └─────────────┘
           ▼
     ┌──────────────────────────────────────┐
@@ -251,7 +251,7 @@ Morning-Mailer/
 | `OPENAI_MODEL` | Model for OpenAI | gpt-4.1-nano |
 | `MODEL_TEMPERATURE` | LLM creativity | 0.5 |
 | `MAX_TOKENS` | Max response length | 10500 |
-| `REDIS_URL` | Upstash Redis connection string | (your URL) |
+| `REDIS_URL` | Valkey Redis connection string | (your URL) |
 | `SCHEDULE_TIME` | Default run time (when user has no schedule_time) | 08:00 |
 | `DAYS_THRESHOLD` | Default look back period | 2 |
 | `MAX_EMAIL_RESULTS` | Default max emails to fetch | 20 |
@@ -401,7 +401,7 @@ send_email("test@example.com", "Test Subject", "Hello!")
 - **langchain-groq**: Groq LLM
 - **langchain-google-genai**: Google Gemini
 - **loguru**: Logging
-- **redis**: Task queue backend (Upstash)
+- **redis**: Task queue backend (Valkey)
 - **requests**: HTTP client for WAHA WhatsApp API calls
 - **WAHA** ([waha.devlike.pro](https://waha.devlike.pro)): WhatsApp HTTP API (separate Docker container) — provides REST API at `http://waha:3000` for sending messages. Dashboard at `:3000/dashboard` for QR-based WhatsApp Web pairing. Setup guide: https://waha.devlike.pro/blog/waha-on-docker/
 

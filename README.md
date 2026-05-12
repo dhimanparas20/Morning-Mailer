@@ -67,7 +67,7 @@ SCHEDULE_CHECK_INTERVAL=5          # Check every N minutes
 EMAIL_HOST_USER=your-email@gmail.com
 EMAIL_HOST_PASSWORD=your-app-password
 
-# Redis (Upstash)
+# Redis (local Valkey)
 REDIS_URL=rediss://xxxxx
 ```
 
@@ -365,7 +365,7 @@ docker compose up -d
 
 ### Redis connection refused
 - Check `REDIS_URL` in `.env`
-- Ensure container can reach Upstash
+- Ensure container can reach the Valkey Redis instance
 
 ### Email sending fails
 - Check `EMAIL_HOST_USER` and `EMAIL_HOST_PASSWORD` in `.env`
