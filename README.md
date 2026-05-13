@@ -71,7 +71,37 @@ EMAIL_HOST_PASSWORD=your-app-password
 REDIS_URL=rediss://xxxxx
 ```
 
-### 3. Configure users.json
+### 3. Configure Users
+
+Users are stored in **Redis** (Valkey) as hashes at `USERS_CONFIG:<keyword>`.  
+Manage them via CLI or IPython magics — no need to edit JSON files manually.
+
+#### Option A: CLI (recommended)
+```bash
+# Add a user
+python cli_users.py add --name "Paras" --email "paras@gmail.com" --keyword dhimanparas20
+
+# List all users
+python cli_users.py list
+
+# Update a field
+python cli_users.py update dhimanparas20 --schedule-time "09:00"
+
+# Remove a user
+python cli_users.py remove dhimanparas20
+```
+
+#### Option B: IPython magics
+```bash
+docker compose exec huey uv run ipython
+%redis_users_add --name "Paras" --email "paras@gmail.com" --keyword dhimanparas20
+%redis_users_list
+%redis_users_update dhimanparas20 --schedule_time "09:00"
+%redis_users_remove dhimanparas20
+```
+
+#### Option C: users.json (fallback)
+If no users are found in Redis, the system falls back to `users.json`.  
 Create `users.json` with your users:
 ```json
 [
@@ -197,8 +227,10 @@ Morning-Mailer/
 │   ├── prompt.py              # Simple HTML template
 │   ├── logger.py              # Logging
 │   ├── generics.py            # Utility functions
+│   ├── redis_users.py         # Redis user storage & CRUD
 │   ├── ipython_startup.py     # IPython magic functions
 │   └── ipython_config.py      # IPython configuration
+├── cli_users.py                # CLI for Redis user management
 ├── gauth/                     # OAuth credentials
 │   ├── client_secret.json     # ONE shared OAuth app
 │   └── tokens/                # One token per user
@@ -271,18 +303,33 @@ docker compose exec huey uv run ipython
 
 | Command | Description |
 |---------|-------------|
-| `%daily_email_summary` | Enqueue the daily email fetch task (all users) |
-| `%daily_whatsapp_summary` | Enqueue the daily WhatsApp summary task (all users) |
+| `%daily_email_summary` | Trigger the daily email fetch task (all users, respects schedule) |
+| `%daily_whatsapp_summary` | Trigger the daily WhatsApp summary task (all users, respects schedule) |
+| `%force_email_summary` | Force email summary for ALL users immediately (ignores schedule) |
+| `%force_whatsapp_summary` | Force WhatsApp summary for ALL users immediately (ignores schedule) |
 | `%send_email_summary <keyword\|email>` | Send email summary to a specific user |
 | `%send_whatsapp_summary <keyword\|mobile>` | Send WhatsApp summary to a specific user |
 | `%check_job_status <job_id>` | Check status of a Huey job |
 | `%setup_oauth <keyword>` | Generate new OAuth token (desktop) |
 | `%setup_web_oauth <keyword>` | Generate new OAuth token (web app) |
-| `%check_tokens` | Show token status for all users |
-| `%send_test_email <subject> <body>` | Send test email |
+| `%check_tokens` | Show token status for all users (Redis + users.json) |
+| `%send_test_email <subject> <body>` | Send test email (uses MY_EMAIL from .env) |
 | `%send_test_whatsapp <mobile> <message>` | Send test WhatsApp message |
-| `%summarize_whatsapp <keyword>` | Fetch & summarize in WhatsApp format |
-| `%redis_status` | Check Redis connection |
+| `%summarize_whatsapp <keyword>` | Fetch & summarize in WhatsApp format (no send) |
+| `%run_summarize <keyword>` | Fetch & summarize in HTML email format (no send) |
+| `%run_fetch <keyword>` | Fetch emails directly, print count (no Huey) |
+| `%redis_status` | Check Redis connection health + user count |
+| `%redis_users_list` | List all users stored in Redis |
+| `%redis_users_show <keyword>` | Show one user's full details from Redis |
+| `%redis_users_add --name X --email Y --keyword Z ...` | Add a user to Redis |
+| `%redis_users_update <keyword> --field value ...` | Update a user in Redis |
+| `%redis_users_remove <keyword>` | Remove a user from Redis |
+| `%redis_users_activate <keyword>` | Activate a user in Redis |
+| `%redis_users_deactivate <keyword>` | Deactivate a user in Redis |
+| `%redis_users_import [file]` | Import users from JSON file into Redis |
+| `%redis_users_export [file]` | Export Redis users to JSON file |
+| `%redis_users_clear yes` | Delete ALL users from Redis (requires confirmation) |
+| `%redis_users_fields` | Show all available user fields with types |
 | `%clear_last_run [keyword\|all]` | Clear last run date for testing (use in DEV mode) |
 | `%cls` | Clear terminal screen |
 

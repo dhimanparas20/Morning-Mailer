@@ -42,7 +42,7 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 ### 1. tasks.py - Task Scheduler & Main Logic
 - **Purpose**: Orchestrates email fetching, summarization, and sending for all users
 - **Key Functions**:
-  - `load_users()`: Loads active users from users.json with .env fallback
+  - `load_users()`: Loads active users from Redis first, falls back to users.json, then .env
   - `get_user_settings(user)`: Gets per-user max_email_results & days_threshold
   - `should_run_today(user, global_schedule_time, redis_prefix="")`: Checks if user's schedule time has passed today (redis_prefix isolates email vs WhatsApp tracking)
   - `get_user_last_run_date(keyword)`: Gets last processed date from Redis
@@ -85,18 +85,26 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 - **Parallel Fetching**: Uses ThreadPoolExecutor for thread-safe email fetching
 
 ### 2.1 modules/web_auth.py - Web OAuth Setup
-- **Purpose**: Alternative OAuth using web app credentials with local callback server
-- **Key Features**:
-  - Starts local HTTP server to handle OAuth callback
-  - Opens browser automatically for authentication
-  - Works with Web OAuth credentials (client_secret_web.json)
-  - Falls back to desktop credentials if web not available
-- **Usage**:
-  ```bash
-  uv run python -m modules.web_auth <keyword>
-  # or in IPython:
-  %setup_web_oauth <keyword>
-  ```
+
+### 2.2 modules/redis_users.py - Redis User Storage
+- **Purpose**: Store and manage users as Redis hashes (alternative to users.json)
+- **Key Pattern**: `USERS_CONFIG:<keyword>` — each user is a Redis hash, keywords tracked in `USERS_CONFIG:keywords` SET
+- **Key Classes**:
+  - `RedisUserManager(r)`: Full CRUD with pipelined bulk reads/writes
+- **Key Methods**:
+  - `add_or_update(user_dict)`: Insert or replace a user hash
+  - `get(keyword)`: HGETALL → typed Python dict
+  - `get_all()`: SMEMBERS + pipelined HGETALL → list of dicts
+  - `delete(keyword)`: Remove hash + keyword from index set
+  - `activate(keyword)` / `deactivate(keyword)`: Toggle active field
+  - `import_from_json(path)`: Bulk-import from users.json
+  - `export_to_json(path)`: Bulk-export to users.json
+  - `clear_all()`: Delete all users from Redis
+  - `count()` / `exists(keyword)`: Cardinality checkers
+- **Type Handling**: Bools stored as `1`/`0`, ints as strings, rehydrated on read
+- **CLI Tool**: `cli_users.py` (argparse + Rich tables) — list, show, add, update, remove, activate, deactivate, import, export, clear, fields
+- **IPython Magics**: `%redis_users_list`, `%redis_users_show`, `%redis_users_add`, `%redis_users_update`, `%redis_users_remove`, `%redis_users_activate`, `%redis_users_deactivate`, `%redis_users_import`, `%redis_users_export`, `%redis_users_clear`, `%redis_users_fields`
+- **Fallback**: `tasks.load_users()` tries Redis first; if empty/error, falls back to `users.json` → `.env` defaults
 
 ### 3. modules/agent_mod.py - LLM Integration
 - **Purpose**: Wrapper for LLM summarization
@@ -120,17 +128,34 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 
 ### 5. modules/ipython_startup.py - Magic Functions
 - **Available Magic Functions**:
-  - `%daily_email_summary`: Trigger the task (all users)
-  - `%daily_whatsapp_summary`: Trigger WhatsApp summary task (all users)
+  - `%daily_email_summary`: Trigger the task (all users, respects schedule)
+  - `%daily_whatsapp_summary`: Trigger WhatsApp summary task (all users, respects schedule)
+  - `%force_email_summary`: Force email summary for ALL users immediately (ignores schedule)
+  - `%force_whatsapp_summary`: Force WhatsApp summary for ALL users immediately (ignores schedule)
   - `%send_email_summary <keyword|email>`: Send email summary to a specific user only
   - `%send_whatsapp_summary <keyword|mobile>`: Send WhatsApp summary to a specific user only
   - `%check_job_status <job_id>`: Check Huey job
-  - `%setup_oauth <keyword>`: Generate new token
-  - `%check_tokens`: Show token status for all users
+  - `%setup_oauth <keyword>`: Generate new token (desktop)
+  - `%setup_web_oauth <keyword>`: Generate new token (web app)
+  - `%check_tokens`: Show token status for all users (Redis + users.json)
   - `%send_test_email <subject> <body>`: Test SMTP
   - `%send_test_whatsapp <mobile> <message>`: Test WhatsApp message
   - `%summarize_whatsapp <keyword>`: Fetch & summarize in WhatsApp format
+  - `%run_summarize <keyword>`: Fetch & summarize in HTML email format
+  - `%run_fetch <keyword>`: Fetch emails directly (no Huey)
   - `%redis_status`: Check Redis connection
+  - `%redis_users_list`: List all users in Redis
+  - `%redis_users_show <keyword>`: Show one user's details
+  - `%redis_users_add --name X --email Y --keyword Z ...`: Add user to Redis
+  - `%redis_users_update <keyword> --field value ...`: Update user in Redis
+  - `%redis_users_remove <keyword>`: Remove user from Redis
+  - `%redis_users_activate <keyword>`: Activate a user in Redis
+  - `%redis_users_deactivate <keyword>`: Deactivate a user in Redis
+  - `%redis_users_import [file]`: Import users.json into Redis
+  - `%redis_users_export [file]`: Export Redis users to JSON
+  - `%redis_users_clear yes`: Delete ALL users from Redis
+  - `%redis_users_fields`: Show available user fields and types
+  - `%clear_last_run [keyword|all]`: Clear last run date (use in DEV mode)
   - `%cls`: Clear terminal
 
 ## Data Flow
@@ -142,7 +167,7 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 2. daily_email_summary() called
            │
            ▼
-3. For each active user in users.json:
+3. For each active user in Redis (USERS_CONFIG:<keyword>) or users.json:
     ├── Check if current time >= user's schedule_time
     ├── Check ENV_MODE:
     │    ├── dev: skip last_run check → always eligible
@@ -177,7 +202,9 @@ Morning-Mailer/
 │   ├── prompt.py               # Simple HTML template
 │   ├── logger.py              # Logging
 │   ├── generics.py            # Utilities
+│   ├── redis_users.py         # Redis user storage & CRUD
 │   └── ipython_startup.py     # IPython magic functions
+├── cli_users.py                # CLI for Redis user management
 ├── gauth/
 │   ├── client_secret.json      # Single OAuth credentials (shared)
 │   └── tokens/                 # One token per user
@@ -344,7 +371,9 @@ In IPython (`docker compose exec huey uv run ipython`):
 | `%send_test_whatsapp` | `%send_test_whatsapp <mobile> <message>` | Send test WhatsApp message |
 | `%summarize_whatsapp` | `%summarize_whatsapp <keyword>` | Fetch & summarize in WhatsApp format |
 | `%redis_status` | `%redis_status` | Check Redis connection |
-| `%clear_last_run` | `%clear_last_run [keyword\|all]` | Clear last run date (use in DEV mode) |
+| `%clear_last_run` | `%redis_users_clear yes` | Delete ALL users from Redis |
+| `%redis_users_fields` | Show all available user fields |
+| `%clear_last_run [keyword\|all]` | Clear last run date (use in DEV mode) |
 | `%run_fetch` | `%run_fetch` | Direct fetch (no Huey) |
 | `%cls` | `%cls` | Clear terminal |
 
