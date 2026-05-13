@@ -80,7 +80,9 @@ services:
       - host.docker.internal:host-gateway
     volumes:
       - ./modules:/app/modules
+      - ./modules/ipython_startup.py:/app/.ipython/profile_default/startup/auto_reload.py
       - ./tasks.py:/app/tasks.py
+      - ./cli_users.py:/app/cli_users.py
       - ./gauth:/app/gauth
       - ./users.json:/app/users.json
     command: uv run huey_consumer tasks.huey -k thread -w 1 --flush-locks info

@@ -15,37 +15,38 @@ You are an email assistant. Review the emails below and create a simple HTML sum
 - **Critical**: Payment failures, security alerts, urgent matters
 - **Important**: Project updates, notifications, deadlines
 - **Informational**: Status updates, reports (only useful ones)
-- **Ignored**: Marketing, newsletters, promotions (skip)
+- **Ignored**: Marketing, newsletters, promotions (skip entirely)
 
 ## Output Requirements
 
 1. Output ONLY raw HTML - no markdown, no code blocks
 2. Use simple inline CSS
 3. Clean, readable layout
+4. COUNT each category yourself from the emails provided — never copy sample numbers
 
 ## Simple Layout
 
 ```
-┌─────────────────────────────────────┐
-│ {USER_NAME}'s Daily Summary — Date  │
-├─────────────────────────────────────┤
-│ SUMMARY: 20 emails | 2 Critical     │
-│          5 Important | 13 Info     │
-├─────────────────────────────────────┤
-│ ⚠ CRITICAL                         │
-│ • Subject - Sender - Brief summary  │
-│ • Subject - Sender - Brief summary  │
-├─────────────────────────────────────┤
-│ ✓ IMPORTANT                        │
-│ • Subject - Sender - Brief summary  │
-│ • Subject - Sender - Brief summary  │
-├─────────────────────────────────────┤
-│ ℹ INFORMATIONAL                  │
-│ • Subject - Sender - Brief summary  │
-│ • Subject - Sender - Brief summary  │
-├─────────────────────────────────────┤
-│ Insights: One line takeaway         │
-└─────────────────────────────────────┘
+┌──────────────────────────────────┐
+│ {USER_NAME}'s Daily Summary — Date│
+├──────────────────────────────────┤
+│ SUMMARY: N emails | X Critical   │
+│          Y Important | Z Info    │
+├──────────────────────────────────┤
+│ ⚠ CRITICAL                       │
+│ • Subject - Sender - Brief note  │
+│ • Subject - Sender - Brief note  │
+├──────────────────────────────────┤
+│ ✓ IMPORTANT                      │
+│ • Subject - Sender - Brief note  │
+│ • Subject - Sender - Brief note  │
+├──────────────────────────────────┤
+│ ℹ INFORMATIONAL                 │
+│ • Subject - Sender - Brief note  │
+│ • Subject - Sender - Brief note  │
+├──────────────────────────────────┤
+│ Insight: One-line takeaway       │
+└──────────────────────────────────┘
 ```
 
 ## Styling
@@ -61,8 +62,9 @@ You are an email assistant. Review the emails below and create a simple HTML sum
 - Summary: regular, 13px, line-height 1.4
 
 ## Rules
-- Be concise - max 1-2 sentences per email summary
-- Focus on actionable info
+- COUNT emails yourself — replace N/X/Y/Z with actual numbers
+- Be concise — max 1 sentence per email
+- Only include actionable info
 - Skip ignored categories entirely
 - Output ONLY HTML
 """
@@ -86,7 +88,7 @@ You are an email assistant. Review the emails below and create a WhatsApp-friend
 - **Critical**: Payment failures, security alerts, urgent matters
 - **Important**: Project updates, notifications, deadlines
 - **Informational**: Status updates, reports (only useful ones)
-- **Ignored**: Marketing, newsletters, promotions (skip)
+- **Ignored**: Marketing, newsletters, promotions (skip entirely)
 
 ## Output Requirements
 
@@ -97,36 +99,35 @@ You are an email assistant. Review the emails below and create a WhatsApp-friend
    - - dash for bullet list items
 3. Keep each line compact — max ~50 chars for mobile readability
 4. Separate sections with a blank line
+5. COUNT each category yourself from the emails provided — never copy sample numbers
 
 ## WhatsApp Layout
 
 ```
 📊 *{USER_NAME}'s Daily Summary — Date*
-20 emails | 🔴 2 Critical | 🟢 5 Important | 🔵 13 Info
+N emails | 🔴 X Critical | 🟢 Y Important | 🔵 Z Info
 
 🔴 *CRITICAL*
-- *Subject* — _Sender_: One-line summary
 - *Subject* — _Sender_: One-line summary
 
 🟢 *IMPORTANT*
 - *Subject* — _Sender_: One-line summary
-- *Subject* — _Sender_: One-line summary
 
 🔵 *INFORMATIONAL*
 - *Subject* — _Sender_: One-line summary
-- *Subject* — _Sender_: One-line summary
 
-💡 *Insight*: One line takeaway
+💡 *Insight*: One-line takeaway
 ```
 
 ## Formatting Rules
 - *text* for bold (subjects, section headers, insight label)
 - _text_ for italic (sender names only)
 - Use — (em dash) between subject and sender
-- Each bullet: *Subject* — _Sender_: Summary
-- Max 1 line per email summary
-- If too many emails, show only the most important ones (limit ~15-20 items max)
-- Keep total message under 4096 characters (WhatsApp limit)
+- Each bullet: *Subject* — _Sender_: summary
+- COUNT emails yourself — replace N/X/Y/Z with actual numbers
+- Max 1 line per email
+- If too many emails, show only most important (~15 items max)
+- Keep total message under 4096 chars (WhatsApp limit)
 - Skip ignored categories entirely
 - Output ONLY the formatted text, nothing else
 """

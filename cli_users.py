@@ -174,6 +174,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_exp.add_argument("--file", default="users.json", help="Output file (default: users.json)")
     sub.add_parser("clear", help="Delete ALL users from Redis (requires confirmation)")
 
+    # ---- fields ----
+    sub.add_parser("fields", help="Show all available user fields and their CLI flags")
+
     return parser
 
 
@@ -308,6 +311,48 @@ def cmd_clear(mgr: RedisUserManager) -> None:
     console.print(f"[green]✓ Cleared {n} user(s) from Redis[/green]")
 
 
+def cmd_fields() -> None:
+    """Show all available user fields and their CLI flags."""
+    from modules.redis_users import ALL_FIELDS, BOOL_FIELDS, INT_FIELDS
+
+    table = Table(title="[bold]Available User Fields[/bold]", show_header=True,
+                  header_style="bold cyan", box=box.SIMPLE)
+    table.add_column("Field", style="green")
+    table.add_column("Type", style="magenta", justify="center")
+    table.add_column("CLI Flag", style="cyan")
+    table.add_column("Description", style="white")
+
+    descriptions = {
+        "name":               "Display name",
+        "email":              "Email address for delivery",
+        "keyword":            "Unique ID (links to token_<keyword>.json)",
+        "active":             "Enable/disable this user",
+        "use_email":          "Enable email delivery",
+        "use_whatsapp":       "Enable WhatsApp delivery",
+        "max_email_results":  "Max emails to fetch",
+        "days_threshold":     "Days to look back",
+        "schedule_time":      "Run time (HH:MM, 24h)",
+        "smtp_host_user":     "Custom SMTP username",
+        "smtp_host_password": "Custom SMTP password",
+        "mobile":             "WhatsApp number (country code, no +)",
+    }
+
+    for field in ALL_FIELDS:
+        if field in BOOL_FIELDS:
+            ftype = "bool"
+        elif field in INT_FIELDS:
+            ftype = "int"
+        else:
+            ftype = "str"
+
+        flag = "--" + field.replace("_", "-")
+        required = " (required)" if field in ("name", "email", "keyword") else ""
+        desc = descriptions.get(field, "") + required
+        table.add_row(field, ftype, flag, desc)
+
+    console.print(table)
+
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -340,6 +385,8 @@ def main(argv: list[str] | None = None) -> None:
         cmd_export(mgr, args.file)
     elif args.command == "clear":
         cmd_clear(mgr)
+    elif args.command == "fields":
+        cmd_fields()
     else:
         parser.print_help()
 
