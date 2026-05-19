@@ -146,6 +146,9 @@ def clear_last_run(line):
             kw = user.get("keyword", "default")
             r.delete(f"morning_mailer:last_run:{kw}")
             print(f"  ✓ Cleared: {user.get('name')} ({kw})")
+        r.delete("morning_mailer:specific_last_run")
+        r.delete("morning_mailer:specific_last_schedule")
+        print("  ✓ Cleared: specific scheduler keys")
     else:
         r.delete(f"morning_mailer:last_run:{keyword}")
         print(f"[green]Cleared last_run for keyword: {keyword}[/green]")

@@ -20,6 +20,7 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 - **Smart Fallbacks**: Global .env defaults when per-user settings not specified
 - **WhatsApp Integration**: Send summaries via WhatsApp using WAHA
 - **Per-Channel Toggle**: Enable/disable email (`use_email`) and WhatsApp (`use_whatsapp`) per user
+- **Scheduler Types**: `interval` (per-user times) or `specific` (one daily time for all users via crontab)
 
 ## Quick Start
 
@@ -256,7 +257,9 @@ Morning-Mailer/
 | `DAYS_THRESHOLD` | Default days to look back | 2 |
 | `MAX_EMAIL_RESULTS` | Default max emails to fetch | 20 |
 | `MAX_THREAD_WORKERS` | Parallel users | 5 |
-| `SCHEDULE_CHECK_INTERVAL` | Minutes between checks | 5 |
+| `SCHEDULE_CHECK_INTERVAL` | Minutes between checks (interval mode) | 5 |
+| `SCHEDULER_TYPE` | `interval` (per-user times) or `specific` (one daily time) | interval |
+| `SCHEDULER_SPECIFIC_TIME` | HH:MM for all-user run (specific mode) | 08:00 |
 | `RETRY_COUNT` | Retry attempts | 2 |
 | `RETRY_DELAY` | Seconds between retries | 60 |
 | `MODEL_PROVIDER` | LLM: nvidia/openai/groq/openrouter/google | openai |
@@ -269,21 +272,35 @@ Morning-Mailer/
 | `WAHA_API_KEY` | WAHA API key | - |
 | `WAHA_SESSION` | WAHA session name | default |
 
+### Scheduler Types (`SCHEDULER_TYPE`)
+
+| Type | Behavior | Crontab |
+|------|----------|---------|
+| `interval` | Task runs every `SCHEDULE_CHECK_INTERVAL` minutes. Each user checked against their own `schedule_time`. | `*/N` minutes |
+| `specific` | Task fires **once daily** at `SCHEDULER_SPECIFIC_TIME` (e.g., 08:00). All active users processed together in parallel. Per-user `schedule_time` is ignored. | `hour, minute` |
+
 ### Scheduling
 
+**Interval mode** (`SCHEDULER_TYPE=interval`):
 - Task runs every `SCHEDULE_CHECK_INTERVAL` minutes (default: 5)
 - For each user, checks if current time >= user's schedule_time
 - If yes and hasn't run today → processes that user in parallel
-- Users without schedule_time use global SCHEDULE_TIME from .env
+- Users without schedule_time use global `SCHEDULE_TIME` from .env
+
+**Specific mode** (`SCHEDULER_TYPE=specific`):
+- Task fires **once daily** at `SCHEDULER_SPECIFIC_TIME` (e.g., 08:00)
+- All active users are processed together in parallel via ThreadPoolExecutor
+- Per-user `schedule_time` is ignored — everyone runs at the same time
+- Redis global key `morning_mailer:specific_last_run` prevents duplicate runs
 
 ### Environment Modes (`ENV_MODE`)
 
 | Mode | Run Frequency | Log Level | Description |
 |------|--------------|-----------|-------------|
-| `dev` | Multiple times/day | `DEBUG` (verbose) | Skips Redis last_run check — runs every SCHEDULE_CHECK_INTERVAL when schedule time has passed. Shows all debug/info logs for troubleshooting. |
-| `prod` | Once per day only | `SUCCESS` (quiet) | Enforces Redis last_run check — runs only once per day per user per channel. Only shows SUCCESS/WARNING/ERROR logs; suppresses repetitive credential loading, per-email debug lines, and intermediate info messages. |
+| `dev` | Multiple times/day | `DEBUG` (verbose) | Skips Redis last_run check — runs every tick when schedule has passed. Shows all debug/info logs. |
+| `prod` | Once per day only | `SUCCESS` (quiet) | Enforces Redis last_run check — runs only once per day per user per channel. Only shows SUCCESS/WARNING/ERROR logs. |
 
-In `prod` mode, logs are kept minimal for production monitoring. In `dev` mode, full debug output is available for local development and testing.
+In `specific` scheduler mode, the crontab already ensures once-daily firing; the Redis check (dev/prod) acts as a safety net against duplicate runs on restart.
 
 ### Per-User Settings
 

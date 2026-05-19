@@ -49,6 +49,8 @@ MAX_THREAD_WORKERS = int(os.getenv("MAX_THREAD_WORKERS", 5))
 SCHEDULE_TIME = os.getenv("SCHEDULE_TIME", "08:00")  # Default time for users without schedule_time
 DAYS_THRESHOLD = int(os.getenv("DAYS_THRESHOLD", 1))
 SCHEDULE_CHECK_INTERVAL = int(os.getenv("SCHEDULE_CHECK_INTERVAL", 5))  # Check every N minutes
+SCHEDULER_TYPE = os.getenv("SCHEDULER_TYPE", "interval").lower()  # "interval" or "specific"
+SCHEDULER_SPECIFIC_TIME = os.getenv("SCHEDULER_SPECIFIC_TIME", "08:00")  # time when SCHEDULER_TYPE=specific
 
 # WhatsApp (WAHA) configuration
 WAHA_API_URL = os.getenv("WAHA_API_URL", "http://waha:3000")
@@ -634,9 +636,22 @@ def daily_whatsapp_summary() -> dict[str, Any]:
     }
 
 
-@huey.periodic_task(crontab(minute=f"*/{SCHEDULE_CHECK_INTERVAL}"))
+# Build cron expression based on scheduler type
+if SCHEDULER_TYPE == "specific":
+    _specific_h, _specific_m = map(int, SCHEDULER_SPECIFIC_TIME.split(":"))
+    _cron = crontab(hour=str(_specific_h), minute=str(_specific_m))
+else:
+    _cron = crontab(minute=f"*/{SCHEDULE_CHECK_INTERVAL}")
+
+
+@huey.periodic_task(_cron)
 def daily_summary() -> dict[str, Any]:
-    """Unified daily task: fetch emails once per user, deliver via email and/or WhatsApp."""
+    """Unified daily task: fetch emails once per user, deliver via email and/or WhatsApp.
+
+    Supports two SCHEDULER_TYPE modes:
+      - "interval": Per-user schedule_time checks (current behavior)
+      - "specific": All users run at one specific time via crontab(hour, minute)
+    """
     now = datetime.now()
     current_time_str = now.strftime("%H:%M")
     today_str = now.strftime("%Y-%m-%d")
@@ -648,18 +663,45 @@ def daily_summary() -> dict[str, Any]:
     email_eligible: dict[str, dict[str, Any]] = {}
     whatsapp_eligible: dict[str, dict[str, Any]] = {}
 
-    for user in users:
-        if not user.get("active", True):
-            continue
-        keyword = user.get("keyword", "default")
+    if SCHEDULER_TYPE == "specific":
+        # ---- Specific-time mode: crontab fires once daily at SCHEDULER_SPECIFIC_TIME ----
+        env_mode = os.getenv("ENV_MODE", "dev").lower()
+        last_run = redis_client.get("morning_mailer:specific_last_run")
+        last_schedule = redis_client.get("morning_mailer:specific_last_schedule")
 
-        if user.get("use_email", True):
-            if should_run_today(user, SCHEDULE_TIME):
+        if env_mode == "dev":
+            if last_schedule == SCHEDULER_SPECIFIC_TIME and last_run == today_str:
+                logger.debug(f"Specific scheduler (DEV): already ran at {SCHEDULER_SPECIFIC_TIME}, skipping")
+                return {"date": today_str, "time": now.strftime("%H:%M:%S"), "eligible_users": 0, "processed": 0}
+        else:
+            if last_run == today_str:
+                logger.debug(f"Specific scheduler (PROD): already ran today at {SCHEDULER_SPECIFIC_TIME}")
+                return {"date": today_str, "time": now.strftime("%H:%M:%S"), "eligible_users": 0, "processed": 0}
+
+        # All active users are eligible (ignore per-user schedule_time)
+        for user in users:
+            if not user.get("active", True):
+                continue
+            keyword = user.get("keyword", "default")
+            if user.get("use_email", True):
                 email_eligible[keyword] = user
-
-        if user.get("use_whatsapp", True) and user.get("mobile"):
-            if WAHA_API_KEY and should_run_today(user, SCHEDULE_TIME, redis_prefix="whatsapp_"):
+            if user.get("use_whatsapp", True) and user.get("mobile") and WAHA_API_KEY:
                 whatsapp_eligible[keyword] = user
+
+    else:
+        # ---- Interval mode: per-user schedule_time checks (current behavior) ----
+        for user in users:
+            if not user.get("active", True):
+                continue
+            keyword = user.get("keyword", "default")
+
+            if user.get("use_email", True):
+                if should_run_today(user, SCHEDULE_TIME):
+                    email_eligible[keyword] = user
+
+            if user.get("use_whatsapp", True) and user.get("mobile"):
+                if WAHA_API_KEY and should_run_today(user, SCHEDULE_TIME, redis_prefix="whatsapp_"):
+                    whatsapp_eligible[keyword] = user
 
     all_keywords = set(email_eligible.keys()) | set(whatsapp_eligible.keys())
 
@@ -697,6 +739,11 @@ def daily_summary() -> dict[str, Any]:
                 logger.error(f"Error processing user: {e}")
                 results.append({"error": str(e)})
 
+    # Mark global run for specific mode
+    if SCHEDULER_TYPE == "specific":
+        redis_client.set("morning_mailer:specific_last_run", today_str)
+        redis_client.set("morning_mailer:specific_last_schedule", SCHEDULER_SPECIFIC_TIME)
+
     total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
     logger.success(f"Daily summary completed: {len(results)} user(s) processed, {total_emails} emails")
 
@@ -710,7 +757,10 @@ def daily_summary() -> dict[str, Any]:
     }
 
 
-logger.success(f"Scheduler: checking every {SCHEDULE_CHECK_INTERVAL} min, default time {SCHEDULE_TIME}, max_results {MAX_EMAIL_RESULTS}, days {DAYS_THRESHOLD}")
+if SCHEDULER_TYPE == "specific":
+    logger.success(f"Scheduler [SPECIFIC]: runs once daily at {SCHEDULER_SPECIFIC_TIME}, max_results {MAX_EMAIL_RESULTS}, days {DAYS_THRESHOLD}")
+else:
+    logger.success(f"Scheduler [INTERVAL]: checking every {SCHEDULE_CHECK_INTERVAL} min, default time {SCHEDULE_TIME}, max_results {MAX_EMAIL_RESULTS}, days {DAYS_THRESHOLD}")
 
 
 def print_startup_summary():
@@ -726,8 +776,11 @@ def print_startup_summary():
     scheduler_table.add_column("Setting", style="cyan")
     scheduler_table.add_column("Value", style="green")
     scheduler_table.add_column("Description", style="dim")
+    scheduler_table.add_row("Scheduler Type", SCHEDULER_TYPE.upper(), "interval=per-user schedules | specific=one daily time for all")
     scheduler_table.add_row("Check Interval", f"{SCHEDULE_CHECK_INTERVAL} minutes", "How often the scheduler checks for eligible users")
     scheduler_table.add_row("Default Time", SCHEDULE_TIME, "Default run time for users without schedule_time")
+    if SCHEDULER_TYPE == "specific":
+        scheduler_table.add_row("Specific Time", SCHEDULER_SPECIFIC_TIME, "Time when ALL users run (specific mode)")
     scheduler_table.add_row("Max Emails/User", str(MAX_EMAIL_RESULTS), "Max emails fetched per user (default)")
     scheduler_table.add_row("Days Threshold", str(DAYS_THRESHOLD), "Days to look back for emails (default)")
     scheduler_table.add_row("Max Workers", str(MAX_THREAD_WORKERS), "Max parallel users processed at once")
