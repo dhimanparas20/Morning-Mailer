@@ -34,6 +34,16 @@ class AgentModule:
             max_tokens=tokens,
         )
 
+    def hot_switch_model(self, model_provider: Literal["openai", "google", "openrouter", "nvidia"] | None = None, model_name: str | None = None, temperature: float | None = None) -> None:
+        provider = model_provider or os.getenv("MODEL_PROVIDER", "nvidia")
+        temp = temperature if temperature is not None else float(os.getenv("MODEL_TEMPERATURE", 0.4))
+        logger.info(f"Hot-switching model: {provider} / {model_name or 'default'} (temp: {temp})")
+        self.llm = create_llm(
+            model_provider=provider,
+            model_name=model_name,
+            model_temperature=temp,
+        )
+
     def summarize_emails(self, emails: list[dict[str, Any]], prompt: Optional[str] = None, user_name: Optional[str] = None) -> str:
         """Summarize emails using LLM"""
         if self.llm is None:

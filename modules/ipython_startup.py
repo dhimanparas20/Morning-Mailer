@@ -133,6 +133,24 @@ def run_summarize(line):
 
 
 @register_line_magic
+def switch_model(line):
+    """Hot-switch the LLM model at runtime. Usage: %switch_model <provider> [model_name] [temperature]"""
+    parts = line.strip().split()
+    if not parts:
+        print("Usage: %switch_model <provider> [model_name] [temperature]")
+        print("Example: %switch_model openrouter gpt-4o-mini 0.3")
+        print("         %switch_model openai gpt-4o")
+        print("Supported providers: openai, google, openrouter, nvidia")
+        return
+    provider = parts[0]
+    model_name = parts[1] if len(parts) > 1 else None
+    temperature = float(parts[2]) if len(parts) > 2 else None
+    from tasks import AGENT
+    AGENT.hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
+    print(f"[green]✓[/green] Model hot-switched to [bold]{provider}[/bold] ({model_name or 'default'}, temp: {temperature or 'default'})")
+
+
+@register_line_magic
 def clear_last_run(line):
     """Clear last run date for a user (or all users) to allow re-running. Usage: %clear_last_run [keyword|all]"""
     from tasks import load_users, get_user_last_run_date, set_user_last_run_date
@@ -696,6 +714,7 @@ magics = [
     ("%redis_users_deactivate", "<keyword>", "Deactivate a user in Redis"),
     ("%redis_users_clear", "yes", "Delete ALL users from Redis"),
     ("%redis_users_fields", "", "Show all available user fields and types"),
+    ("%switch_model", "<provider> [model] [temp]", "Hot-switch LLM model at runtime"),
     ("%clear_last_run", "[keyword|all]", "Clear last run tracking in Redis"),
     ("%cls", "", "Clear terminal screen"),
 ]
