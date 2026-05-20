@@ -36,6 +36,7 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 6. **DEV/PROD Mode**: DEV = run multiple times/day (verbose DEBUG logs), PROD = run once/day (quiet SUCCESS-level logs)
 7. **WhatsApp Integration**: Send summaries via WhatsApp using WAHA API
 8. **Per-Channel Toggles**: `use_email` and `use_whatsapp` per-user booleans
+9. **Scheduler Types**: `interval` (per-user schedule_time) or `specific` (one daily crontab for all users)
 
 ## Core Components
 
@@ -55,8 +56,8 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
   - `daily_whatsapp_summary()`: Huey periodic task - WhatsApp delivery (separate Redis tracking, respects use_whatsapp)
 
 - **Scheduling Logic**:
-  - Task runs every N minutes (SCHEDULE_CHECK_INTERVAL, default: 5)
-  - For each user, checks if current time >= user's schedule_time
+  - `SCHEDULER_TYPE=interval` (default): Task runs every N minutes (SCHEDULE_CHECK_INTERVAL, default: 5). For each user, checks if current time >= user's schedule_time. Email/WhatsApp tracked separately in Redis.
+  - `SCHEDULER_TYPE=specific`: Task fires **once daily** via crontab at `SCHEDULER_SPECIFIC_TIME` (e.g., 08:00). All active users processed together in parallel. Per-user `schedule_time` is ignored. Global Redis key `morning_mailer:specific_last_run` prevents re-runs.
   - Email task tracks processed in Redis (key: `morning_mailer:last_run:<keyword>`)
   - WhatsApp task tracks separately (key: `morning_mailer:whatsapp_last_run:<keyword>`)
   - `use_email` / `use_whatsapp` per-user booleans control which channel runs
@@ -161,17 +162,20 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 ## Data Flow
 
 ```
-1. Huey scheduler triggers every SCHEDULE_CHECK_INTERVAL minutes
+1. Huey scheduler triggers daily_summary():
+   - interval mode: every SCHEDULE_CHECK_INTERVAL minutes
+   - specific mode: once daily at SCHEDULER_SPECIFIC_TIME via crontab
            │
            ▼
-2. daily_email_summary() called
+2. daily_summary() called
            │
            ▼
 3. For each active user in Redis (USERS_CONFIG:<keyword>) or users.json:
-    ├── Check if current time >= user's schedule_time
+    ├── interval: Check if current time >= user's schedule_time
+    ├── specific: All active users eligible (schedule_time ignored)
     ├── Check ENV_MODE:
     │    ├── dev: skip last_run check → always eligible
-    │    └── prod: check Redis (key: morning_mailer:last_run:<keyword>)
+    │    └── prod: check Redis (key: morning_mailer:last_run:<keyword> or morning_mailer:specific_last_run)
     └── If eligible → add to eligible_users
            │
            ▼
@@ -183,7 +187,7 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
     │    - Uses user's max_email_results (or global default)
     │    - Uses user's days_threshold (or global default)
     ├── summarize_emails(emails)
-    ├── send_email(to=user_email, smtp_host=user_smtp)
+    ├── send_email(to=user_email, smtp_host=user_smtp) + send_whatsapp(mobile, text)
     └── set_user_last_run_date(keyword, today)
            │
            ▼
@@ -259,8 +263,9 @@ Morning-Mailer/
 | `mobile` | No | - | WhatsApp number with country code |
 
 ### Scheduling Logic:
-- Task runs every SCHEDULE_CHECK_INTERVAL minutes (default: 5)
-- At each run, checks each user:
+- `SCHEDULER_TYPE=interval` (default): Task runs every SCHEDULE_CHECK_INTERVAL minutes (default: 5)
+- `SCHEDULER_TYPE=specific`: Task fires **once daily** via crontab at `SCHEDULER_SPECIFIC_TIME` (e.g., 08:00). All active users processed together in parallel. Per-user `schedule_time` is ignored. Global Redis key `morning_mailer:specific_last_run` prevents re-runs.
+- At each run (interval mode), checks each user:
   - If current time >= user's schedule_time (or global SCHEDULE_TIME)
   - If ENV_MODE=dev: always run (skip last_run check) + verbose DEBUG logs
   - If ENV_MODE=prod: only if hasn't run today (tracked in Redis) + quiet SUCCESS-level logs
@@ -283,10 +288,12 @@ Morning-Mailer/
 | `DAYS_THRESHOLD` | Default look back period | 2 |
 | `MAX_EMAIL_RESULTS` | Default max emails to fetch | 20 |
 | `MAX_THREAD_WORKERS` | Parallel users/processes | 5 |
-| `SCHEDULE_CHECK_INTERVAL` | Minutes between scheduler checks | 5 |
+| `SCHEDULE_CHECK_INTERVAL` | Minutes between scheduler checks (interval mode) | 5 |
+| `SCHEDULER_TYPE` | `interval` (per-user times) or `specific` (one daily crontab) | interval |
+| `SCHEDULER_SPECIFIC_TIME` | HH:MM for all-user run (specific mode) | 08:00 |
 | `RETRY_COUNT` | Retry attempts on failure | 2 |
 | `RETRY_DELAY` | Seconds between retries | 60 |
-| `ENV_MODE` | dev = run multiple times + verbose logs, prod = run once/day + quiet logs | dev |
+| `ENV_MODE` | dev = skip last_run check + verbose logs, prod = once/day + quiet logs | dev |
 | `EMAIL_HOST_USER` | Fallback SMTP username | (your email) |
 | `EMAIL_HOST_PASSWORD` | Fallback SMTP password | (app password) |
 | `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth (e.g., ngrok tunnel) | - |
