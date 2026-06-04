@@ -41,15 +41,22 @@ async def users_json(request: Request, search: str = "", sort: str = "name", ord
         users = [u for u in users if q in u.get("name", "").lower() or q in u.get("email", "").lower() or q in u.get("keyword", "").lower()]
     reverse = order == "desc"
     users.sort(key=lambda u: str(u.get(sort, "")).lower(), reverse=reverse)
-    token_status = {t["keyword"]: t["has_token"] for t in services.check_tokens()}
+    token_status = {t["keyword"]: t for t in services.check_tokens()}
     for u in users:
-        u["_has_token"] = token_status.get(u.get("keyword"), False)
+        tok = token_status.get(u.get("keyword"), {})
+        u["_has_token"] = tok.get("has_token", False) if isinstance(tok, dict) else bool(tok)
     return JSONResponse(users)
 
 
 @router.get("/api/fields")
 async def user_fields_json():
     return JSONResponse(services.user_fields())
+
+
+@router.get("/api/stats")
+async def user_stats_json():
+    from admin.services import get_last_summary_stats
+    return JSONResponse(get_last_summary_stats())
 
 
 @router.get("/api/tokens")
@@ -74,7 +81,7 @@ async def add_user_submit(
     active: str = Form("false"), use_email: str = Form("false"), use_whatsapp: str = Form("false"),
     fetch_calendar: str = Form("false"), max_email_results: str = Form(""), days_threshold: str = Form(""),
     schedule_time: str = Form(""), smtp_host_user: str = Form(""), smtp_host_password: str = Form(""),
-    mobile: str = Form(""), csrf_token: str = Form(...),
+    mobile: str = Form(""), summary_template: str = Form(""), csrf_token: str = Form(...),
 ):
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
@@ -96,13 +103,15 @@ async def add_user_submit(
         data["smtp_host_password"] = smtp_host_password
     if mobile:
         data["mobile"] = mobile
+    if summary_template:
+        data["summary_template"] = summary_template
 
     try:
         services.create_user(data)
         log.success(f"Created user '{keyword}' via form")
     except ValueError as e:
         users = services.list_users()
-        token_status = {t["keyword"]: t["has_token"] for t in services.check_tokens()}
+        token_status = {t["keyword"]: t for t in services.check_tokens()}
         csrf = generate_csrf_token()
         return templates.TemplateResponse(request, "users.html", {
             "users": users, "token_status": token_status,
@@ -143,7 +152,7 @@ async def edit_user_submit(
     active: str = Form("true"), use_email: str = Form("true"), use_whatsapp: str = Form("true"),
     fetch_calendar: str = Form("false"), max_email_results: str = Form(""), days_threshold: str = Form(""),
     schedule_time: str = Form(""), smtp_host_user: str = Form(""), smtp_host_password: str = Form(""),
-    mobile: str = Form(""), csrf_token: str = Form(...),
+    mobile: str = Form(""), summary_template: str = Form(""), csrf_token: str = Form(...),
 ):
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
@@ -165,6 +174,8 @@ async def edit_user_submit(
         data["smtp_host_password"] = smtp_host_password
     if mobile:
         data["mobile"] = mobile
+    if summary_template:
+        data["summary_template"] = summary_template
 
     try:
         services.update_user(keyword, data)
@@ -229,6 +240,20 @@ async def export_users_submit(filepath: str = Form("users.json"), csrf_token: st
     n = services.export_users(filepath)
     log.success(f"Exported {n} user(s) to {filepath}")
     return {"ok": True, "message": f"Exported {n} user(s)", "count": n}
+
+
+@router.get("/export/csv")
+async def export_users_csv():
+    import io
+    from fastapi.responses import StreamingResponse
+    csv_data = services.export_users_csv()
+    if not csv_data:
+        raise HTTPException(404, "No users to export")
+    return StreamingResponse(
+        io.StringIO(csv_data),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=users.csv"},
+    )
 
 
 @router.post("/clear")

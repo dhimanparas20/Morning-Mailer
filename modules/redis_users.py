@@ -30,6 +30,7 @@ ALL_FIELDS = [
     "schedule_time",
     "smtp_host_user", "smtp_host_password",
     "mobile",
+    "summary_template",
 ]
 
 # Fields that need type coercion when reading back from Redis (Redis stores

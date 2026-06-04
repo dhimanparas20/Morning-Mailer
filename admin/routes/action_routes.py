@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Form
+from fastapi import APIRouter, HTTPException, Form, Request
 from fastapi.responses import JSONResponse
 
 from admin.auth import validate_csrf_token
@@ -7,6 +7,14 @@ from modules.logger import get_logger
 
 log = get_logger("Admin Actions")
 router = APIRouter(prefix="/actions")
+
+
+# ── History ────────────────────────────────────────────────────────────────
+
+@router.get("/history/{keyword}")
+async def action_user_history(keyword: str, limit: int = 20):
+    result = services.get_history(keyword, limit)
+    return JSONResponse({"ok": True, "history": result})
 
 
 # ── Status polling ─────────────────────────────────────────────────────────
@@ -216,4 +224,57 @@ async def action_export(filepath: str = Form("users.json")):
         n = services.export_users(filepath)
         return JSONResponse({"ok": True, "count": n})
     except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ── Bulk actions ──────────────────────────────────────────────────────────
+
+@router.post("/bulk/email")
+async def action_bulk_email(request: Request):
+    try:
+        body = await request.json()
+        keywords = body.get("keywords", [])
+        if not keywords:
+            raise HTTPException(400, "No keywords provided")
+        log.info(f"Bulk email for {len(keywords)} user(s)")
+        result = services.bulk_send_email(keywords)
+        return JSONResponse({"ok": True, "result": result})
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Bulk email failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/bulk/whatsapp")
+async def action_bulk_whatsapp(request: Request):
+    try:
+        body = await request.json()
+        keywords = body.get("keywords", [])
+        if not keywords:
+            raise HTTPException(400, "No keywords provided")
+        log.info(f"Bulk WhatsApp for {len(keywords)} user(s)")
+        result = services.bulk_send_whatsapp(keywords)
+        return JSONResponse({"ok": True, "result": result})
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Bulk WhatsApp failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/bulk/revoke")
+async def action_bulk_revoke(request: Request):
+    try:
+        body = await request.json()
+        keywords = body.get("keywords", [])
+        if not keywords:
+            raise HTTPException(400, "No keywords provided")
+        log.info(f"Bulk revoke for {len(keywords)} user(s)")
+        result = services.bulk_revoke_tokens(keywords)
+        return JSONResponse({"ok": True, "result": result})
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Bulk revoke failed: {e}")
         raise HTTPException(500, str(e))

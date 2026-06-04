@@ -427,6 +427,12 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
         user_schedule = user.get("schedule_time", global_schedule_time)
         set_user_last_run_date(keyword, now.strftime("%Y-%m-%d"), user_schedule)
 
+        try:
+            from admin.services import record_history
+            record_history(keyword, "email", "sent", email_count=len(result["emails"]))
+        except Exception:
+            pass
+
     return {
         "keyword": keyword,
         "name": user_name,
@@ -556,6 +562,12 @@ def huey_send_whatsapp_to_user(keyword: str) -> dict[str, Any]:
     redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
     redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user.get("schedule_time", SCHEDULE_TIME))
 
+    try:
+        from admin.services import record_history
+        record_history(keyword, "whatsapp", "sent")
+    except Exception:
+        pass
+
     return {"keyword": keyword, "emails_fetched": result.get("count", 0), "calendar_events": len(calendar_events), "status": "sent"}
 
 
@@ -648,6 +660,13 @@ def huey_fetch_calendar_and_send_email(keyword: str, days: int = 2) -> dict[str,
         body=summary, is_html=True,
         smtp_user=user.get("smtp_host_user"), smtp_password=user.get("smtp_host_password"),
     )
+
+    try:
+        from admin.services import record_history
+        record_history(keyword, "email", "sent", email_count=0)
+    except Exception:
+        pass
+
     return {"keyword": keyword, "events": len(result["events"]), "status": "sent"}
 
 
@@ -670,6 +689,13 @@ def huey_fetch_calendar_and_send_whatsapp(keyword: str, days: int = 2) -> dict[s
     from modules.prompt import CALENDAR_WHATSAPP_PROMPT
     summary = get_agent().summarize_emails(result["events"], prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user.get("name", "Unknown"))
     send_whatsapp(mobile, summary)
+
+    try:
+        from admin.services import record_history
+        record_history(keyword, "whatsapp", "sent")
+    except Exception:
+        pass
+
     return {"keyword": keyword, "events": len(result["events"]), "status": "sent"}
 
 
@@ -700,6 +726,11 @@ def huey_fetch_calendar_and_send_both(keyword: str, days: int = 2) -> dict[str, 
             smtp_user=user.get("smtp_host_user"), smtp_password=user.get("smtp_host_password"),
         )
         email_status = "sent"
+        try:
+            from admin.services import record_history
+            record_history(keyword, "email", "sent", email_count=0)
+        except Exception:
+            pass
     except Exception as e:
         email_status = f"error: {e}"
 
@@ -709,6 +740,11 @@ def huey_fetch_calendar_and_send_both(keyword: str, days: int = 2) -> dict[str, 
             wa_summary = get_agent().summarize_emails(events, prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user.get("name", "Unknown"))
             send_whatsapp(mobile, wa_summary)
             wa_status = "sent"
+            try:
+                from admin.services import record_history
+                record_history(keyword, "whatsapp", "sent")
+            except Exception:
+                pass
         except Exception as e:
             wa_status = f"error: {e}"
 

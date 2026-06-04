@@ -55,6 +55,12 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - **Admin Panel**: Full web UI for managing users, triggering actions, monitoring status
 - **OAuth Setup**: Setup Google OAuth tokens through the browser (no CLI needed)
 - **Task Queue Architecture**: Admin panel enqueues tasks, huey container executes them asynchronously
+- **Bulk Actions**: Select multiple users with checkboxes, trigger email/WhatsApp/revoke in bulk
+- **Summary Templates**: Per-user custom prompt for email summarization (stored in Redis)
+- **CSV Export**: Export all users as a downloadable CSV file
+- **Per-User History**: Track email/WhatsApp sends in Redis, viewable per user
+- **Token Expiry Alerts**: Badges showing token health (Ready/Expiring/Expired) in users table
+- **Job Status Checker**: Paste a task ID to check its status on the dashboard
 
 ## Quick Start
 
@@ -149,6 +155,7 @@ If no users are found in Redis, the system falls back to `users.json`.
 | `smtp_host_user` | No | .env EMAIL_HOST_USER | Custom SMTP sender |
 | `smtp_host_password` | No | .env EMAIL_HOST_PASSWORD | Custom SMTP password |
 | `mobile` | No | - | WhatsApp number (country code, no +) |
+| `summary_template` | No | (empty = default) | Custom prompt for email summarization |
 
 ### 4. First-Time OAuth Setup
 
@@ -196,24 +203,24 @@ Morning-Mailer/
 │   ├── config.py               # Settings from .env
 │   ├── auth.py                 # Session auth + CSRF + AuthMiddleware
 │   ├── models.py               # Pydantic models
-│   ├── services.py             # Business logic (enqueues huey tasks)
+│   ├── services.py             # Business logic (enqueues huey tasks, bulk actions, history, CSV export)
 │   ├── routes/
 │   │   ├── auth_routes.py      # Login/logout
-│   │   ├── user_routes.py      # User CRUD + HTML forms
-│   │   ├── action_routes.py    # Trigger actions (email/whatsapp/calendar)
+│   │   ├── user_routes.py      # User CRUD, CSV export, token revoke, summary template handling
+│   │   ├── action_routes.py    # Trigger actions (email/whatsapp/calendar), bulk endpoints, history, calendar fetch modal
 │   │   ├── oauth_routes.py     # OAuth flow (/callback BEFORE /{keyword})
 │   │   └── system_routes.py    # Redis/scheduler status
 │   ├── templates/              # Jinja2 HTML templates
 │   │   ├── base.html           # Base layout (glassmorphism, navbar/scripts blocks)
 │   │   ├── login.html          # Login page (no navbar)
 │   │   ├── dashboard.html      # Dashboard with stats/actions
-│   │   ├── users.html          # User list with search/sort + OAuth Setup/Copy buttons
-│   │   ├── user_form.html      # Add/edit form (checkbox JS fix, SMTP placeholders)
+│   │   ├── users.html          # User list with search/sort, bulk selection, token badges, history, OAuth Setup/Copy buttons
+│   │   ├── user_form.html      # Add/edit form (checkbox JS fix, SMTP placeholders, summary template)
 │   │   ├── oauth_redirect.html # Redirects to Google OAuth (uses | safe filter)
 │   │   └── oauth_result.html   # OAuth success/failure result
 │   └── static/
 │       ├── css/style.css       # Purple gradient glassmorphism theme
-│       └── js/app.js           # Toast notifications + task ID copy + job status checker
+│       └── js/app.js           # Toast notifications, task ID copy, bulk selection, history/calendar modals, job status checker
 ├── modules/
 │   ├── fetch_emails.py         # Gmail API (keyword-based tokens)
 │   ├── fetch_calendar.py       # Google Calendar API (shares tokens with Gmail)
@@ -283,9 +290,12 @@ docker compose logs -f
 Access at http://localhost:8000 (default: admin/changeme)
 
 ### Features
-- **Dashboard**: Stats cards, quick actions, scheduler config, job status checker, users overview
-- **Users**: Full CRUD with search/sort/filter, per-user action buttons, OAuth Setup + Revoke + Copy buttons
-- **Actions**: Trigger email/whatsapp summaries, force all, test send — returns task ID with copy button
+- **Dashboard**: Stats cards, quick actions, scheduler config, job status checker, users overview with last run times
+- **Users**: Full CRUD with search/sort/filter, per-user action buttons, OAuth Setup + Revoke + Copy buttons, token expiry badges (Ready/Expiring/Expired), history button, bulk selection checkboxes
+- **Bulk Actions**: Select multiple users → trigger email/WhatsApp/revoke tokens for all selected
+- **Summary Templates**: Per-user custom prompt textarea in edit form, stored in Redis
+- **CSV Export**: Download all users as a CSV file via Users page
+- **Actions**: Trigger email/whatsapp summaries, force all, test send, calendar fetch — returns task ID with copy button
 - **Job Status**: Paste a task ID to check its status (pending/finished/error)
 - **OAuth**: Setup OAuth tokens through the browser (click "Setup" → authorize → done)
 - **System**: Redis status, model switching, last-run clearing

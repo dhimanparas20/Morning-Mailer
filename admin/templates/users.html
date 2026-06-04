@@ -7,6 +7,7 @@
         <a href="/users/add" class="btn btn-success btn-sm"><i class="bi bi-plus-lg"></i> Add User</a>
         <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#importModal"><i class="bi bi-upload"></i> Import</button>
         <button class="btn btn-outline-info btn-sm" id="exportBtn"><i class="bi bi-download"></i> Export</button>
+        <a href="/users/export/csv" class="btn btn-outline-info btn-sm" title="Export CSV"><i class="bi bi-filetype-csv"></i> CSV</a>
     </div>
 </div>
 
@@ -44,12 +45,25 @@
     </div>
 </div>
 
+<div id="bulkToolbar" class="card mb-3" style="display:none">
+    <div class="card-body py-2 d-flex align-items-center gap-2">
+        <span class="text-muted small"><span id="bulkCount">0</span> selected</span>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-primary" id="bulkEmail" title="Send Email to selected"><i class="bi bi-envelope"></i> Email</button>
+            <button class="btn btn-outline-success" id="bulkWhatsApp" title="Send WhatsApp to selected"><i class="bi bi-whatsapp"></i> WhatsApp</button>
+            <button class="btn btn-outline-danger" id="bulkRevoke" title="Revoke tokens for selected"><i class="bi bi-key-fill"></i> Revoke Tokens</button>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary ms-auto" id="bulkDeselect"><i class="bi bi-x-lg"></i> Deselect All</button>
+    </div>
+</div>
+
 <div class="card">
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
                 <thead>
                     <tr>
+                        <th><input type="checkbox" id="selectAll" class="form-check-input"></th>
                         <th>Status</th>
                         <th>Name</th>
                         <th>Email</th>
@@ -66,6 +80,7 @@
                 <tbody>
                     {% for user in users %}
                     <tr>
+                        <td><input type="checkbox" class="form-check-input user-checkbox" value="{{ user.keyword }}"></td>
                         <td>
                             {% if user.active %}
                             <span class="badge bg-success">Active</span>
@@ -86,9 +101,16 @@
                             {% if user.fetch_calendar %}<span class="badge bg-info">C</span>{% endif %}
                         </td>
                         <td>
-                            {% if token_status.get(user.keyword, false) %}
+                            {% set tok = token_status.get(user.keyword, {}) %}
+                            {% if tok.has_token %}
                             <div class="btn-group btn-group-sm">
+                                {% if tok.expiry_status == 'expired' %}
+                                <span class="badge bg-danger align-self-center" title="Token expired"><i class="bi bi-exclamation-triangle"></i> Expired</span>
+                                {% elif tok.expiry_status == 'expiring_soon' %}
+                                <span class="badge bg-warning text-dark align-self-center" title="Token expiring soon"><i class="bi bi-clock-history"></i> Expiring</span>
+                                {% else %}
                                 <span class="badge bg-success align-self-center"><i class="bi bi-check-circle"></i> Ready</span>
+                                {% endif %}
                                 <button class="btn btn-outline-danger action-btn-sm" data-action="/users/{{ user.keyword }}/token/revoke" data-method="POST" data-csrf="{{ csrf_token }}" data-confirm="Revoke token for '{{ user.keyword }}'? User will need to re-authorize." title="Revoke token"><i class="bi bi-key-fill"></i> Revoke</button>
                             </div>
                             {% else %}
@@ -101,6 +123,7 @@
                         <td>
                             <div class="btn-group btn-group-sm">
                                 <a href="/users/{{ user.keyword }}/edit" class="btn btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>
+                                <button class="btn btn-outline-info history-btn" data-keyword="{{ user.keyword }}" data-name="{{ user.name }}" title="View History"><i class="bi bi-clock-history"></i></button>
                                 <button class="btn btn-outline-primary action-btn-sm" data-action="/actions/email/send/{{ user.keyword }}" data-method="POST" title="Send Email Summary"><i class="bi bi-envelope"></i></button>
                                 {% if user.mobile %}
                                 <button class="btn btn-outline-success action-btn-sm" data-action="/actions/whatsapp/send/{{ user.keyword }}" data-method="POST" title="Send WhatsApp Summary"><i class="bi bi-whatsapp"></i></button>
@@ -163,6 +186,21 @@
         </div>
     </div>
 </div>
+
+<!-- History Modal -->
+<div class="modal fade" id="historyModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content" style="background:rgba(20,20,45,0.95);backdrop-filter:blur(20px);border:1px solid var(--mm-border);border-radius:16px;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-semibold"><i class="bi bi-clock-history" style="color:var(--mm-info)"></i> <span id="historyModalTitle">History</span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="historyModalBody">
+                <div class="text-center py-4"><i class="bi bi-hourglass-split text-muted"></i> Loading...</div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -193,6 +231,7 @@ document.querySelectorAll('.copy-oauth-btn').forEach(function(btn) {
     });
 });
 
+// ── Calendar fetch modal ──
 document.querySelectorAll('.calendar-fetch-btn').forEach(function(btn) {
     btn.addEventListener('click', async function() {
         var kw = this.dataset.keyword;
@@ -239,6 +278,120 @@ document.querySelectorAll('.calendar-fetch-btn').forEach(function(btn) {
             body.innerHTML = '<div class="text-danger"><i class="bi bi-exclamation-triangle"></i> Network error: ' + err.message + '</div>';
         }
     });
+});
+
+// ── Bulk selection ──
+var selectAll = document.getElementById('selectAll');
+var bulkToolbar = document.getElementById('bulkToolbar');
+var bulkCount = document.getElementById('bulkCount');
+
+function getSelected() {
+    return Array.from(document.querySelectorAll('.user-checkbox:checked')).map(function(cb) { return cb.value; });
+}
+
+function updateBulkToolbar() {
+    var selected = getSelected();
+    bulkCount.textContent = selected.length;
+    bulkToolbar.style.display = selected.length > 0 ? '' : 'none';
+}
+
+if (selectAll) {
+    selectAll.addEventListener('change', function() {
+        document.querySelectorAll('.user-checkbox').forEach(function(cb) { cb.checked = selectAll.checked; });
+        updateBulkToolbar();
+    });
+}
+
+document.querySelectorAll('.user-checkbox').forEach(function(cb) {
+    cb.addEventListener('change', updateBulkToolbar);
+});
+
+document.getElementById('bulkDeselect')?.addEventListener('click', function() {
+    document.querySelectorAll('.user-checkbox').forEach(function(cb) { cb.checked = false; });
+    if (selectAll) selectAll.checked = false;
+    updateBulkToolbar();
+});
+
+async function bulkAction(action, label) {
+    var keywords = getSelected();
+    if (keywords.length === 0) { showToast('No users selected', 'error'); return; }
+    if (!confirm(label + ' for ' + keywords.length + ' user(s)?')) return;
+    try {
+        var resp = await fetch('/actions/' + action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keywords: keywords })
+        });
+        var data = await resp.json();
+        if (data.ok) {
+            var r = data.result;
+            showToast(label + ': ' + r.enqueued + '/' + r.total + ' enqueued' + (r.revoked ? ' (' + r.revoked + ' revoked)' : ''), 'success');
+        } else {
+            showToast(data.detail || 'Error', 'error');
+        }
+    } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+    }
+}
+
+document.getElementById('bulkEmail')?.addEventListener('click', function() { bulkAction('bulk/email', 'Email'); });
+document.getElementById('bulkWhatsApp')?.addEventListener('click', function() { bulkAction('bulk/whatsapp', 'WhatsApp'); });
+document.getElementById('bulkRevoke')?.addEventListener('click', function() { bulkAction('bulk/revoke', 'Revoke Tokens'); });
+
+// ── History modal ──
+document.querySelectorAll('.history-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+        var kw = this.dataset.keyword;
+        var name = this.dataset.name;
+        var title = document.getElementById('historyModalTitle');
+        var body = document.getElementById('historyModalBody');
+        title.textContent = 'History — ' + name;
+        body.innerHTML = '<div class="text-center py-4"><i class="bi bi-hourglass-split text-muted"></i> Loading...</div>';
+        var modal = new bootstrap.Modal(document.getElementById('historyModal'));
+        modal.show();
+        try {
+            var resp = await fetch('/actions/history/' + kw);
+            var data = await resp.json();
+            if (!data.ok || !data.history || data.history.length === 0) {
+                body.innerHTML = '<div class="text-muted text-center py-3"><i class="bi bi-clock"></i> No history yet</div>';
+                return;
+            }
+            var html = '<div class="list-group list-group-flush">';
+            data.history.forEach(function(h) {
+                var d = new Date(h.ts * 1000);
+                var timeStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+                var icon = h.channel === 'whatsapp' ? 'bi-whatsapp' : 'bi-envelope';
+                var color = h.status === 'sent' ? 'text-success' : 'text-danger';
+                html += '<div class="list-group-item" style="background:transparent;border-color:var(--mm-border)">';
+                html += '<div class="d-flex justify-content-between align-items-center">';
+                html += '<div><i class="bi ' + icon + ' ' + color + '"></i> ';
+                html += '<span class="fw-semibold">' + h.channel + '</span>';
+                if (h.email_count) html += ' <span class="text-muted">(' + h.email_count + ' emails)</span>';
+                html += '<br><small class="text-muted">' + timeStr + '</small>';
+                if (h.error) html += '<br><small class="text-danger">' + h.error + '</small>';
+                html += '</div>';
+                html += '<span class="badge bg-' + (h.status === 'sent' ? 'success' : 'danger') + '">' + h.status + '</span>';
+                html += '</div></div>';
+            });
+            html += '</div>';
+            body.innerHTML = html;
+        } catch (err) {
+            body.innerHTML = '<div class="text-danger"><i class="bi bi-exclamation-triangle"></i> Network error: ' + err.message + '</div>';
+        }
+    });
+});
+
+// ── Keyboard shortcuts ──
+document.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        var searchInput = document.querySelector('input[name="search"]');
+        if (searchInput) searchInput.focus();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+        e.preventDefault();
+        window.location.href = '/users/add';
+    }
 });
 </script>
 {% endblock %}

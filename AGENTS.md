@@ -127,6 +127,12 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `generate_oauth_url(keyword)` — Creates Google OAuth URL (uses `client_secret_web.json` first, falls back to `client_secret.json`)
   - `exchange_oauth_code(code, keyword)` — Exchanges auth code for token
   - `enqueue_task(task_func, *args, **kwargs)` — Enqueues a huey task. **IMPORTANT**: Huey 3.0's `TaskWrapper` has no `__name__` — access original function via `task_func.func` to get the name (see `admin/services.py:enqueue_task()`)
+  - `bulk_send_email(keywords)` → enqueues `huey_send_email_to_user` for each keyword
+  - `bulk_send_whatsapp(keywords)` → enqueues `huey_send_whatsapp_to_user` for each keyword
+  - `bulk_revoke_tokens(keywords)` → deletes token files for each keyword
+  - `export_users_csv()` → returns CSV string of all users
+  - `record_history(keyword, channel, status, email_count, error_message)` → stores send event in Redis list (`morning_mailer:history:<keyword>`, max 50 entries, 90-day TTL)
+  - `get_last_summary_stats()` → returns `{keyword: {last_email_run, last_whatsapp_run, total_sends}}` from Redis history keys
 - **Note**: Tasks module is imported once at startup (no `importlib.reload`) to avoid re-initializing module-level code in the app container.
 - **Logging**: Uses `modules.logger.get_logger("Admin Services")` for all operations
 
@@ -147,6 +153,16 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 - `POST /users/{keyword}/edit` — updates user, redirects to `GET /users/{keyword}/edit?updated=1` (303 redirect, NOT JSON)
 - `POST /users/{keyword}/token/revoke` — deletes token file, requires CSRF
 - `POST /users/add` — creates user, returns JSON
+- `GET /users/export/csv` — streams all users as CSV download
+- `POST /users/export` — bulk export trigger (enqueues tasks)
+
+**Action Routes**:
+- `GET /actions/history/{keyword}` — returns per-user send history from Redis
+- `POST /actions/calendar/fetch/{keyword}` — fetches calendar events, returns JSON for modal display
+- `POST /actions/bulk/email` — sends email to all selected keywords
+- `POST /actions/bulk/whatsapp` — sends WhatsApp to all selected keywords
+- `POST /actions/bulk/revoke` — revokes tokens for all selected keywords
+- `POST /actions/clear/last-run` — clears all last_run keys from Redis
 
 **Checkbox Handling in Forms**: HTML checkboxes send nothing when unchecked. The `user_form.html` template uses JavaScript to add hidden inputs with `value="false"` for unchecked checkboxes on form submit. Routes receive `"true"` or `"false"` strings and compare with `== "true"`.
 
@@ -156,15 +172,15 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 |----------|---------|
 | `base.html` | Base layout (navbar, Bootstrap 5, glassmorphism theme). Has `{% block navbar %}` for hiding on login/oauth pages, `{% block body_class %}` for custom body classes, `{% block scripts %}` for page-specific JS |
 | `login.html` | Login page (no navbar, centered card) |
-| `dashboard.html` | Stats cards, quick actions, scheduler config, job status checker, users overview |
-| `users.html` | User list with search/sort/filter, action buttons, OAuth setup/revoke + copy buttons |
-| `user_form.html` | Add/edit user form with section headers, .env SMTP fallback placeholders, checkbox JS fix, success toast via `?updated=1` |
+| `dashboard.html` | Stats cards, quick actions, scheduler config, job status checker, users overview with last run times |
+| `users.html` | User list with search/sort/filter, bulk selection checkboxes, token expiry badges, history button/modal, OAuth setup/revoke + copy buttons |
+| `user_form.html` | Add/edit user form with section headers, .env SMTP fallback placeholders, checkbox JS fix, summary template textarea, success toast via `?updated=1` |
 | `oauth_redirect.html` | Redirects to Google OAuth. Uses `{{ auth_url | safe }}` in script tag (NOT `{{ auth_url }}` — Jinja2 escapes `&` to `&amp;` which breaks OAuth URLs) |
 | `oauth_result.html` | Shows OAuth success/failure with link back to users |
 
 #### 2.8 admin/static/ - Static Files
 - `css/style.css` — Purple gradient glassmorphism theme
-- `js/app.js` — Toast notifications (`showToast()`), task ID + copy toast (`showTaskQueued()`), action handlers (`action-btn-sm`), job status checker (`checkJobStatus()`)
+- `js/app.js` — Toast notifications (`showToast()`), task ID + copy toast (`showTaskQueued()`), action handlers (`action-btn-sm`), job status checker (`checkJobStatus()`), bulk selection handlers, history modal, calendar modal, `apiPostWithBody()` for CSRF form data
 
 ### 3. modules/fetch_emails.py - Gmail Integration
 - **Purpose**: Handles all Gmail API interactions
@@ -221,9 +237,10 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `clear_all()`: Delete all users from Redis
   - `count()` / `exists(keyword)`: Cardinality checkers
 - **Type Handling**: Bools stored as `1`/`0`, ints as strings, rehydrated on read
-- **ALL_FIELDS**: `name`, `email`, `keyword`, `active`, `use_email`, `use_whatsapp`, `fetch_calendar`, `max_email_results`, `days_threshold`, `schedule_time`, `smtp_host_user`, `smtp_host_password`, `mobile`
+- **ALL_FIELDS**: `name`, `email`, `keyword`, `active`, `use_email`, `use_whatsapp`, `fetch_calendar`, `max_email_results`, `days_threshold`, `schedule_time`, `smtp_host_user`, `smtp_host_password`, `mobile`, `summary_template`
 - **BOOL_FIELDS**: `active`, `use_email`, `use_whatsapp`, `fetch_calendar`
 - **INT_FIELDS**: `max_email_results`, `days_threshold`
+- **STR_FIELDS**: `name`, `email`, `keyword`, `schedule_time`, `smtp_host_user`, `smtp_host_password`, `mobile`, `summary_template`
 
 ### 7. modules/agent_mod.py - LLM Integration
 - **Purpose**: Wrapper for LLM summarization
@@ -266,24 +283,24 @@ Morning-Mailer/
 │   ├── config.py               # Settings from .env
 │   ├── auth.py                 # Session auth + CSRF + AuthMiddleware
 │   ├── models.py               # Pydantic models
-│   ├── services.py             # Business logic (enqueues huey tasks, logging)
+│   ├── services.py             # Business logic (enqueues huey tasks, bulk actions, history, CSV export, logging)
 │   ├── routes/
 │   │   ├── auth_routes.py      # Login/logout (logging)
-│   │   ├── user_routes.py      # User CRUD (logging, edit redirects with ?updated=1)
-│   │   ├── action_routes.py    # Trigger actions (logging)
+│   │   ├── user_routes.py      # User CRUD (logging, edit redirects with ?updated=1, CSV export, token revoke, summary template)
+│   │   ├── action_routes.py    # Trigger actions (logging), bulk endpoints, history, calendar fetch modal
 │   │   ├── oauth_routes.py     # OAuth flow (/callback BEFORE /{keyword}!)
 │   │   └── system_routes.py    # Redis/scheduler status (logging)
 │   ├── templates/              # Jinja2 HTML templates
 │   │   ├── base.html           # Base layout (navbar block, scripts block)
 │   │   ├── login.html          # Login page (no navbar)
 │   │   ├── dashboard.html      # Dashboard with stats/actions
-│   │   ├── users.html          # User list with search/sort, OAuth setup + copy buttons
-│   │   ├── user_form.html      # Add/edit form (checkbox JS fix, SMTP placeholders, success toast)
+│   │   ├── users.html          # User list with search/sort, bulk selection, token expiry badges, history, OAuth setup + copy buttons
+│   │   ├── user_form.html      # Add/edit form (checkbox JS fix, SMTP placeholders, summary template, success toast)
 │   │   ├── oauth_redirect.html # OAuth redirect (uses | safe filter for URLs in scripts)
 │   │   └── oauth_result.html   # OAuth result page
 │   └── static/
 │       ├── css/style.css       # Purple gradient glassmorphism theme
-│       └── js/app.js           # Toast notifications + task ID copy + job status checker
+│       └── js/app.js           # Toast notifications + task ID copy + bulk selection + history/calendar modals
 ├── modules/
 │   ├── fetch_emails.py         # Gmail API
 │   ├── fetch_calendar.py       # Google Calendar API
@@ -413,6 +430,7 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
     ├── Fetch calendar events if fetch_calendar=true
     ├── Summarize with LLM (get_agent().summarize_emails())
     ├── Send via enabled channels
+    ├── Record history in Redis (record_history)
     └── Update Redis last_run tracking
 ```
 
@@ -612,6 +630,7 @@ The codebase uses `functools` extensively to cache pure helper functions and opt
 - **DO NOT cache**: Functions with side effects, external state, or network calls
 - **DO NOT cache**: `get_gmail_service()`, `get_calendar_service()` — these create new API clients and may refresh tokens
 - **DO NOT cache**: `has_valid_token()` — checks filesystem state which can change
+- **DO NOT cache**: `get_header()` — receives `headers` list containing dicts; dicts are unhashable and can't be cached
 - **DO NOT cache**: `create_llm()` — expensive initialization, not called repeatedly
 - **maxsize=1**: For functions that never change (static paths, singletons)
 - **maxsize=128-1024**: For functions with bounded input domain (user keywords, string processing)
@@ -713,3 +732,9 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 12. **Session/CSRF memory leak**: In-memory `_sessions` and `_CSRF_TOKENS` dicts grow unbounded. Call `_cleanup_expired()` periodically (done automatically in `create_session()` and `generate_csrf_token()` every 5 minutes).
 
 13. **web_auth.py scope format bug**: Google returns `scope` as a space-separated string. Wrapping it in `[...]` produces `["gmail.readonly calendar.readonly"]` (1 element) instead of `["gmail.readonly", "calendar.readonly"]`. Use `.split()` to fix. Desktop OAuth via `fetch_emails.py` is unaffected (uses `creds.to_json()`).
+
+14. **`token_status` dict shape**: `check_tokens()` returns `[{keyword, has_token, expiry_status, name, active}]`. Routes build `{keyword: full_dict}` for templates. Templates access `tok.has_token` and `tok.expiry_status` — NOT `token_status[keyword]` as a boolean.
+
+15. **`apiPostWithBody()` for CSRF forms**: Routes using `Form(...)` need body data as `application/x-www-form-urlencoded`. `apiPost()` sends JSON which FastAPI rejects. Use `apiPostWithBody()` which sends `URLSearchParams` for form-based CSRF routes (delete, activate, deactivate, revoke, import, export).
+
+16. **History recording is fire-and-forget**: `record_history()` in `tasks.py` is wrapped in `try/except: pass`. History failures never break main task execution. Redis history keys auto-expire after 90 days.

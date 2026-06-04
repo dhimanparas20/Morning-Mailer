@@ -222,6 +222,7 @@ def user_fields() -> dict[str, Any]:
         "days_threshold": "Days back", "schedule_time": "Run time (HH:MM)",
         "smtp_host_user": "SMTP username", "smtp_host_password": "SMTP password",
         "mobile": "WhatsApp number",
+        "summary_template": "Custom prompt template (leave empty for default)",
     }
     return {
         "fields": ALL_FIELDS,
@@ -234,16 +235,42 @@ def user_fields() -> dict[str, Any]:
 # ── Token Management ───────────────────────────────────────────────────────
 
 def check_tokens() -> list[dict[str, Any]]:
+    from datetime import datetime
     users = list_users()
     result = []
     for user in users:
         kw = user.get("keyword", "default")
         token_path = TOKEN_DIR / f"token_{kw}.json"
+        has_token = token_path.exists()
+        expiry_status = "none"
+        if has_token:
+            try:
+                with open(token_path) as f:
+                    token_data = json.load(f)
+                expiry_str = token_data.get("expiry")
+                if expiry_str and expiry_str != "null" and expiry_str != "None":
+                    # expiry can be ISO format string or None
+                    if isinstance(expiry_str, str):
+                        expiry_dt = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
+                        days_left = (expiry_dt - datetime.now(expiry_dt.tzinfo)).days
+                        if days_left < 0:
+                            expiry_status = "expired"
+                        elif days_left <= 7:
+                            expiry_status = "expiring_soon"
+                        else:
+                            expiry_status = "ok"
+                    else:
+                        expiry_status = "ok"
+                else:
+                    expiry_status = "ok"
+            except Exception:
+                expiry_status = "unknown"
         result.append({
             "keyword": kw,
             "name": user.get("name", "Unknown"),
-            "has_token": token_path.exists(),
+            "has_token": has_token,
             "active": user.get("active", True),
+            "expiry_status": expiry_status,
         })
     return result
 
@@ -259,6 +286,152 @@ def revoke_token(keyword: str) -> bool:
         token_path.unlink()
         return True
     return False
+
+
+def bulk_send_email(keywords: list[str]) -> dict[str, Any]:
+    """Enqueue email summary for multiple users."""
+    tasks = _get_tasks()
+    results = []
+    for kw in keywords:
+        user = get_user(kw)
+        if not user:
+            results.append({"keyword": kw, "status": "error", "error": "User not found"})
+            continue
+        try:
+            r = enqueue_task(tasks.huey_send_email_to_user, kw)
+            results.append({"keyword": kw, "status": "enqueued", "task_id": r.get("task_id")})
+        except Exception as e:
+            results.append({"keyword": kw, "status": "error", "error": str(e)})
+    return {"results": results, "total": len(keywords), "enqueued": sum(1 for r in results if r["status"] == "enqueued")}
+
+
+def bulk_send_whatsapp(keywords: list[str]) -> dict[str, Any]:
+    """Enqueue WhatsApp summary for multiple users."""
+    tasks = _get_tasks()
+    results = []
+    for kw in keywords:
+        user = get_user(kw)
+        if not user:
+            results.append({"keyword": kw, "status": "error", "error": "User not found"})
+            continue
+        if not user.get("mobile"):
+            results.append({"keyword": kw, "status": "error", "error": "No mobile number"})
+            continue
+        try:
+            r = enqueue_task(tasks.huey_send_whatsapp_to_user, kw)
+            results.append({"keyword": kw, "status": "enqueued", "task_id": r.get("task_id")})
+        except Exception as e:
+            results.append({"keyword": kw, "status": "error", "error": str(e)})
+    return {"results": results, "total": len(keywords), "enqueued": sum(1 for r in results if r["status"] == "enqueued")}
+
+
+def bulk_revoke_tokens(keywords: list[str]) -> dict[str, Any]:
+    """Revoke tokens for multiple users."""
+    results = []
+    for kw in keywords:
+        revoked = revoke_token(kw)
+        results.append({"keyword": kw, "status": "revoked" if revoked else "not_found"})
+    return {"results": results, "total": len(keywords), "revoked": sum(1 for r in results if r["status"] == "revoked")}
+
+
+def export_users_csv() -> str:
+    """Export all users as CSV string."""
+    import csv
+    import io
+    users = list_users()
+    if not users:
+        return ""
+    output = io.StringIO()
+    # Collect all unique keys across all users
+    all_keys = []
+    for u in users:
+        for k in u.keys():
+            if k not in all_keys:
+                all_keys.append(k)
+    writer = csv.DictWriter(output, fieldnames=all_keys, extrasaction='ignore')
+    writer.writeheader()
+    for u in users:
+        # Convert booleans to strings for CSV
+        row = {}
+        for k, v in u.items():
+            if isinstance(v, bool):
+                row[k] = "true" if v else "false"
+            elif v is None:
+                row[k] = ""
+            else:
+                row[k] = v
+        writer.writerow(row)
+    return output.getvalue()
+
+
+# ── History Tracking ──────────────────────────────────────────────────────
+
+HISTORY_PREFIX = "morning_mailer:history"
+HISTORY_MAX_ENTRIES = 50  # per user
+
+
+def record_history(keyword: str, channel: str, status: str, email_count: int = 0,
+                   error: str | None = None) -> None:
+    """Record a summary event in Redis (called after task completes)."""
+    r = get_redis()
+    if not r:
+        return
+    import time as _time
+    entry = json.dumps({
+        "ts": _time.time(),
+        "channel": channel,
+        "status": status,
+        "email_count": email_count,
+        "error": error,
+    })
+    key = f"{HISTORY_PREFIX}:{keyword}"
+    r.lpush(key, entry)
+    r.ltrim(key, 0, HISTORY_MAX_ENTRIES - 1)
+    r.expire(key, 86400 * 90)  # 90 days TTL
+
+
+def get_history(keyword: str, limit: int = 20) -> list[dict[str, Any]]:
+    """Get recent history entries for a user."""
+    r = get_redis()
+    if not r:
+        return []
+    key = f"{HISTORY_PREFIX}:{keyword}"
+    entries = r.lrange(key, 0, limit - 1)
+    result = []
+    for e in entries:
+        try:
+            result.append(json.loads(e))
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return result
+
+
+def get_last_summary_stats() -> dict[str, dict[str, Any]]:
+    """Get last summary stats for all users (for dashboard)."""
+    r = get_redis()
+    if not r:
+        return {}
+    users = list_users()
+    stats = {}
+    for user in users:
+        kw = user.get("keyword", "")
+        if not kw:
+            continue
+        # Check last_run from tasks
+        last_run = r.get(f"morning_mailer:last_run:{kw}")
+        wa_last_run = r.get(f"morning_mailer:whatsapp_last_run:{kw}")
+        # Get first history entry
+        history = get_history(kw, limit=1)
+        last_entry = history[0] if history else None
+        stats[kw] = {
+            "last_email_run": last_run,
+            "last_whatsapp_run": wa_last_run,
+            "last_status": last_entry.get("status") if last_entry else None,
+            "last_channel": last_entry.get("channel") if last_entry else None,
+            "last_email_count": last_entry.get("email_count", 0) if last_entry else 0,
+        }
+    return stats
+
 
 # ── Actions ────────────────────────────────────────────────────────────────
 # All actions enqueue huey tasks — the huey container does the actual work.

@@ -92,7 +92,15 @@
                         </div>
                     </div>
 
-                    <div class="mt-4 d-flex gap-2">
+                        <div class="col-12"><hr style="border-color:var(--mm-border)"><h6 class="fw-semibold" style="color:var(--mm-warning);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Summary Template <span class="text-muted fw-normal">(optional)</span></h6></div>
+
+                        <div class="col-12">
+                            <label class="form-label">Summary Template <small class="text-muted">(optional — leave empty for default)</small></label>
+                            <textarea name="summary_template" class="form-control" rows="4" placeholder="Leave empty to use the default prompt template. Custom instructions for how the AI should summarize your emails...">{{ user.summary_template if user and user.summary_template else '' }}</textarea>
+                            <div class="form-text">Custom prompt for email summarization. Use {user_name} and {email_list} as placeholders if needed.</div>
+                        </div>
+
+                        <div class="mt-4 d-flex gap-2">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> {{ "Update" if mode == "edit" else "Create" }}</button>
                         <a href="/users" class="btn btn-secondary">Cancel</a>
                     </div>

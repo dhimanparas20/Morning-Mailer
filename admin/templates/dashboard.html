@@ -176,6 +176,7 @@
                         <th>Channels</th>
                         <th>Token</th>
                         <th>Status</th>
+                        <th>Last Run</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -204,6 +205,16 @@
                             <span class="badge bg-success">Active</span>
                             {% else %}
                             <span class="badge bg-secondary">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% set stats = user_stats.get(user.keyword, {}) %}
+                            {% if stats.last_email_run %}
+                            <small class="text-muted" title="Last email: {{ stats.last_email_run }}"><i class="bi bi-envelope"></i> {{ stats.last_email_run.split(' ')[0] if ' ' in stats.last_email_run else stats.last_email_run[:10] }}</small>
+                            {% elif stats.last_whatsapp_run %}
+                            <small class="text-muted" title="Last WhatsApp: {{ stats.last_whatsapp_run }}"><i class="bi bi-whatsapp"></i> {{ stats.last_whatsapp_run.split(' ')[0] if ' ' in stats.last_whatsapp_run else stats.last_whatsapp_run[:10] }}</small>
+                            {% else %}
+                            <small class="text-muted">-</small>
                             {% endif %}
                         </td>
                         <td>
