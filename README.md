@@ -1,17 +1,44 @@
 # Morning Mailer 🤖📧📱
 
-AI-powered multi-user email summarization that fetches your Gmail (or multiple Gmail accounts), generates AI summaries in HTML for email and plain-text for WhatsApp, and delivers them to each user daily.
+AI-powered multi-user email summarization that fetches your Gmail (or multiple Gmail accounts), generates AI summaries in HTML for email and plain-text for WhatsApp, and delivers them to each user daily — with a full admin panel for management.
 
 ## What It Does
 
 Every schedule check (every 5 minutes by default), Morning Mailer:
-1. **Checks** each user's scheduled time in users.json
+1. **Checks** each user's scheduled time in Redis (or users.json fallback)
 2. **Fetches** emails from Gmail (past N days per user) in parallel
-3. **Categorizes** them: Critical, Important, Informational, or Ignored
-4. **Summarizes** using AI into HTML (email) or plain-text (WhatsApp)
-5. **Delivers** via SMTP email and/or WhatsApp (WAHA) per user preference
+3. **Fetches** Google Calendar events if enabled per user
+4. **Categorizes** them: Critical, Important, Informational, or Ignored
+5. **Summarizes** using AI into HTML (email) or plain-text (WhatsApp)
+6. **Delivers** via SMTP email and/or WhatsApp (WAHA) per user preference
 
-## New Features (v2.0+)
+## Architecture
+
+```
+┌──────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Admin Panel │────▶│    Huey      │────▶│  LLM (NVIDIA/
+│  (FastAPI)   │     │  (Worker)    │     │  OpenAI/    │
+│  Port 8000   │     │              │     │  Groq)       │
+└──────────────┘     └──────────────┘     └─────────────┘
+       │                     │
+       │              ┌──────┴──────┐
+       │              │   Redis      │
+       │              │  (Valkey)   │
+       │              └─────────────┘
+       ▼
+┌──────────────┐
+│    WAHA      │
+│  (WhatsApp)  │
+│  Port 3000   │
+└──────────────┘
+```
+
+- **App container** (`app`): FastAPI admin panel — UI, user CRUD, enqueues huey tasks. Does NOT load LLM or heavy modules.
+- **Huey container** (`huey`): Task queue consumer — does all actual work (fetching, summarizing, sending). LLM is lazy-initialized on first task.
+- **Valkey container** (`valkey`): Redis for task queue, user storage, scheduling state
+- **WAHA container** (`waha`): WhatsApp HTTP API for sending messages
+
+## Features
 
 - **Multi-User Support**: Add multiple users with separate Gmail accounts
 - **Per-User Scheduling**: Each user can have their own schedule_time
@@ -21,6 +48,8 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 - **WhatsApp Integration**: Send summaries via WhatsApp using WAHA
 - **Per-Channel Toggle**: Enable/disable email (`use_email`) and WhatsApp (`use_whatsapp`) per user
 - **Calendar Integration**: Include Google Calendar events in summaries (`fetch_calendar` per-user toggle)
+- **Admin Panel**: Full web UI for managing users, triggering actions, monitoring status
+- **Task Queue Architecture**: Admin panel enqueues tasks, huey container executes them asynchronously
 
 ## Quick Start
 
@@ -32,7 +61,7 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 
 ### 1. Get Gmail OAuth Credentials
 1. Go to [Google Cloud Console](https://console.cloud.google.com)
-2. Create a project → Enable Gmail API
+2. Create a project → Enable Gmail API + Google Calendar API
 3. Create OAuth Desktop credentials (download JSON) → save as `gauth/client_secret.json`
 
 **Or for Web OAuth (recommended):**
@@ -47,209 +76,224 @@ Copy `.env.sample` to `.env` and fill in your values:
 cp .env.sample .env
 ```
 
-Or manually add to `.env`:
+Key variables:
 ```bash
 # LLM Provider (nvidia/openai/groq/openrouter/google)
-MODEL_PROVIDER=openai
-MODEL_TEMPERATURE=0.5
-MAX_TOKENS=10500
-
-# Your LLM API Keys
-OPENAI_API_KEY=sk-xxxxx
+MODEL_PROVIDER=openrouter
+OPEN_ROUTER_API_KEY=your-api-key
 
 # Scheduler Settings
-SCHEDULE_TIME=08:00              # Default time for users without schedule_time
-DAYS_THRESHOLD=2                  # Default look back days
-MAX_EMAIL_RESULTS=20              # Default max emails to fetch
-MAX_THREAD_WORKERS=5              # Parallel users
-SCHEDULE_CHECK_INTERVAL=5          # Check every N minutes
+SCHEDULE_TIME=08:00
+DAYS_THRESHOLD=2
+MAX_EMAIL_RESULTS=20
 
 # Email Settings (fallback for users without custom SMTP)
 EMAIL_HOST_USER=your-email@gmail.com
 EMAIL_HOST_PASSWORD=your-app-password
 
-# Redis (local Valkey)
-REDIS_URL=rediss://xxxxx
+# Redis
+REDIS_URL=redis://:testpass@valkey:6379/0
+
+# Admin Panel
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=changeme
+SECRET_KEY=change-this-to-a-random-secret-key
+ADMIN_PORT=8000
+
+# WhatsApp (WAHA)
+WAHA_API_URL=http://waha:3000
+WAHA_API_KEY=your-waha-api-key
 ```
 
 ### 3. Configure Users
 
-Users are stored in **Redis** (Valkey) as hashes at `USERS_CONFIG:<keyword>`.  
-Manage them via CLI or IPython magics — no need to edit JSON files manually.
+Users are stored in **Redis** (Valkey) as hashes at `USERS_CONFIG:<keyword>`.
 
-#### Option A: CLI (recommended)
+#### Option A: Admin Panel (recommended)
+1. Start the stack: `docker compose up -d`
+2. Open http://localhost:8000
+3. Login with admin/changeme
+4. Add users via the UI
+
+#### Option B: CLI
 ```bash
-# Add a user
 python cli_users.py add --name "Paras" --email "paras@gmail.com" --keyword dhimanparas20
-
-# List all users
 python cli_users.py list
-
-# Update a field
 python cli_users.py update dhimanparas20 --schedule-time "09:00"
-
-# Remove a user
-python cli_users.py remove dhimanparas20
 ```
 
-#### Option B: IPython magics
+#### Option C: IPython magics
 ```bash
 docker compose exec huey uv run ipython
 %redis_users_add --name "Paras" --email "paras@gmail.com" --keyword dhimanparas20
 %redis_users_list
-%redis_users_update dhimanparas20 --schedule_time "09:00"
-%redis_users_remove dhimanparas20
 ```
 
-#### Option C: users.json (fallback)
-If no users are found in Redis, the system falls back to `users.json`.  
-Create `users.json` with your users:
-```json
-[
-  {
-    "name": "Paras",
-    "email": "your-email@gmail.com",
-    "keyword": "default",
-    "active": true,
-    "use_email": true,
-    "use_whatsapp": true,
-    "fetch_calendar": true,
-    "max_email_results": 20,
-    "days_threshold": 2,
-    "schedule_time": "08:00",
-    "smtp_host_user": "your-email@gmail.com",
-    "smtp_host_password": "your-app-password",
-    "mobile": "911234567890"
-  },
-  {
-    "name": "Work",
-    "email": "work@company.com",
-    "keyword": "work",
-    "active": true,
-    "use_email": true,
-    "use_whatsapp": false,
-    "fetch_calendar": true,
-    "max_email_results": 10,
-    "schedule_time": "09:00"
-  }
-]
-```
+#### Option D: users.json (fallback)
+If no users are found in Redis, the system falls back to `users.json`.
 
-**Fields:**
-- `name`: Display name
-- `email`: Where to send email summary
-- `keyword`: Unique ID (links to token_<keyword>.json)
-- `active`: true/false (default: true)
-- `use_email`: Enable email delivery (default: true)
-- `use_whatsapp`: Enable WhatsApp delivery (default: true)
-- `fetch_calendar`: Include Google Calendar events (default: false)
-- `max_email_results`: Max emails to fetch (optional, uses .env default)
-- `days_threshold`: Days to look back (optional, uses .env default)
-- `schedule_time`: When to run HH:MM (optional, uses .env SCHEDULE_TIME)
-- `smtp_host_user`: Custom SMTP sender (optional, falls back to .env)
-- `smtp_host_password`: Custom SMTP password (optional, falls back to .env)
-- `mobile`: WhatsApp number with country code, no `+` prefix (e.g., "919418168860")
+**User Fields:**
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `name` | Yes | - | Display name |
+| `email` | Yes | - | Where to send summary |
+| `keyword` | Yes | - | Links to token_<keyword>.json |
+| `active` | No | true | If false, user is skipped |
+| `use_email` | No | true | Enable/disable email delivery |
+| `use_whatsapp` | No | true | Enable/disable WhatsApp delivery |
+| `fetch_calendar` | No | false | Include Google Calendar events |
+| `max_email_results` | No | .env default | Max emails to fetch |
+| `days_threshold` | No | .env default | Days to look back |
+| `schedule_time` | No | .env SCHEDULE_TIME | When to run (HH:MM) |
+| `smtp_host_user` | No | .env EMAIL_HOST_USER | Custom SMTP sender |
+| `smtp_host_password` | No | .env EMAIL_HOST_PASSWORD | Custom SMTP password |
+| `mobile` | No | - | WhatsApp number (country code, no +) |
 
 ### 4. First-Time OAuth Setup
 
+Each user needs an OAuth token for Gmail/Calendar access.
+
 #### Option A: Desktop OAuth (local machine)
 ```bash
-# CLI - generate token for a keyword
 uv run python -m modules.fetch_emails setup <keyword>
-
-# Examples:
-uv run python -m modules.fetch_emails setup default
-uv run python -m modules.fetch_emails setup work
-uv run python -m modules.fetch_emails setup bobyHP07
-
-# Check token status
-uv run python -m modules.fetch_emails check
+# Example:
+uv run python -m modules.fetch_emails setup dhimanparas20
 ```
 
-Or in IPython:
+#### Option B: Web OAuth (via admin panel)
+1. Open http://localhost:8000/users
+2. Click the red X icon next to a user without a token
+3. Complete Google OAuth flow
+
+#### Option C: IPython
 ```bash
-uv run ipython
-%setup_oauth work
+docker compose exec huey uv run ipython
+%setup_oauth dhimanparas20
 %check_tokens
 ```
 
-#### Option B: Web OAuth (remote/server via itcyou)
-
-For server/remote setups without browser access, use Web OAuth with itcyou tunnel:
-
-1. **Start itcyou tunnel** (choose your subdomain):
-```bash
-docker run -d --rm --network host --name itcyou \
-  -e ITCYOU_PORT=47433 \
-  -e ITCYOU_SUBDOMAIN=morning-mailer \
-  dhimanparas20/itcyou:latest
-```
-
-2. **Configure Google Cloud Console** with your domain:
-   - Authorized JavaScript origin: `https://morning-mailer.it.cyou`
-   - Authorized redirect URI: `https://morning-mailer.it.cyou/callback`
-
-3. **Download OAuth JSON** → save as `gauth/client_secret_web.json`
-
-4. **Set callback URL in .env**:
-```bash
-OAUTH_CALLBACK_URL=https://morning-mailer.it.cyou/callback
-```
-
-5. **Generate token**:
-```bash
-# CLI
-uv run python -m modules.web_auth <keyword>
-
-# Or in IPython
-%setup_web_oauth keyword
-```
-
-The OAuth flow will open your browser (or show URL to open). After login, token is saved to `gauth/tokens/token_<keyword>.json`.
-
 ### 5. Run
 ```bash
-# Start the container
+# Start everything
 docker compose up -d
 
-# Check logs
+# Check admin panel logs
+docker compose logs -f app
+
+# Check huey worker logs
 docker compose logs -f huey
 
-# Trigger manually
-docker compose exec huey python -c "from tasks import daily_email_summary; daily_email_summary()"
+# Access admin panel
+open http://localhost:8000
 ```
 
 ## Project Structure
 
 ```
 Morning-Mailer/
-├── tasks.py                    # Main scheduler & task logic
+├── tasks.py                    # Huey tasks & scheduling logic
+├── admin/                      # FastAPI admin panel
+│   ├── main.py                 # App entry point
+│   ├── config.py               # Settings from .env
+│   ├── auth.py                 # Session auth + CSRF
+│   ├── models.py               # Pydantic models
+│   ├── services.py             # Business logic (enqueues huey tasks)
+│   ├── routes/
+│   │   ├── auth_routes.py      # Login/logout
+│   │   ├── user_routes.py      # User CRUD
+│   │   ├── action_routes.py    # Trigger actions (email/whatsapp/calendar)
+│   │   ├── oauth_routes.py     # OAuth flow
+│   │   └── system_routes.py    # Redis/scheduler status
+│   ├── templates/              # Jinja2 HTML templates
+│   │   ├── base.html           # Base layout (glassmorphism)
+│   │   ├── login.html          # Login page
+│   │   ├── dashboard.html      # Dashboard with stats/actions
+│   │   ├── users.html          # User list with search/sort
+│   │   ├── user_form.html      # Add/edit user form
+│   │   ├── oauth_redirect.html # OAuth redirect page
+│   │   └── oauth_result.html   # OAuth result page
+│   └── static/
+│       ├── css/style.css       # Purple gradient glassmorphism theme
+│       └── js/app.js           # Toast notifications + task polling
 ├── modules/
-│   ├── fetch_emails.py        # Gmail API (keyword-based)
-│   ├── fetch_calendar.py      # Google Calendar API (keyword-based)
-│   ├── agent_mod.py           # LLM wrapper
-│   ├── agent_utils.py         # LLM factory
-│   ├── prompt.py              # Simple HTML template
-│   ├── logger.py              # Logging
-│   ├── generics.py            # Utility functions
-│   ├── redis_users.py         # Redis user storage & CRUD
-│   ├── ipython_startup.py     # IPython magic functions
-│   └── ipython_config.py      # IPython configuration
+│   ├── fetch_emails.py         # Gmail API (keyword-based tokens)
+│   ├── fetch_calendar.py       # Google Calendar API (keyword-based tokens)
+│   ├── agent_mod.py            # LLM wrapper
+│   ├── agent_utils.py          # LLM factory
+│   ├── prompt.py               # Prompt templates (email + WhatsApp + calendar)
+│   ├── logger.py               # Logging
+│   ├── generics.py             # Utilities
+│   ├── redis_users.py          # Redis user storage & CRUD
+│   ├── web_auth.py             # Web OAuth setup
+│   └── ipython_startup.py      # IPython magic functions
 ├── cli_users.py                # CLI for Redis user management
-├── gauth/                     # OAuth credentials
-│   ├── client_secret.json     # ONE shared OAuth app
-│   └── tokens/                # One token per user
-│       ├── token_default.json
-│       ├── token_work.json
+├── gauth/                      # OAuth credentials
+│   ├── client_secret.json      # Desktop OAuth (legacy)
+│   ├── client_secret_web.json  # Web OAuth (recommended)
+│   └── tokens/                 # One token per user
+│       ├── token_<keyword>.json
 │       └── ...
-├── users.json                 # User definitions
-├── users.json.sample          # User template
-├── .env                       # Configuration
-├── .env.sample                # Template (shareable)
-├── oauth_setup.sh             # OAuth setup script
-├── Dockerfile                 # Container image
-└── compose.yml               # Docker orchestration
+├── users.json                  # User definitions (fallback)
+├── users.json.sample           # User template
+├── .env                        # Configuration
+├── .env.sample                 # Environment template
+├── Dockerfile                  # Container image
+├── compose.yml                 # Docker orchestration
+└── pyproject.toml              # Dependencies
 ```
+
+## Docker Services
+
+| Service | Container | Port | Purpose |
+|---------|-----------|------|---------|
+| `app` | `app` | 8000 | FastAPI admin panel |
+| `huey` | `huey` | - | Task queue consumer |
+| `valkey` | `valkey` | 6379 | Redis (task queue + user storage) |
+| `waha` | `waha` | 3000 | WhatsApp HTTP API |
+
+### Starting Services
+```bash
+# Start all
+docker compose up -d
+
+# Start specific service
+docker compose up -d app
+
+# Rebuild and start
+docker compose up -d --build
+
+# Stop all
+docker compose down
+```
+
+### Checking Logs
+```bash
+# Admin panel
+docker compose logs -f app
+
+# Huey worker
+docker compose logs -f huey
+
+# All services
+docker compose logs -f
+```
+
+## Admin Panel
+
+Access at http://localhost:8000 (default: admin/changeme)
+
+### Features
+- **Dashboard**: Stats cards, quick actions, scheduler config, users overview
+- **Users**: Full CRUD with search/sort/filter, per-user action buttons
+- **Actions**: Trigger email/whatsapp summaries, force all, test send
+- **OAuth**: Setup OAuth tokens through the browser
+- **System**: Redis status, model switching, last-run clearing
+
+### Architecture
+The admin panel enqueues huey tasks via Redis. The huey container picks them up and executes. This means:
+- Admin panel responds immediately with a task ID
+- Actual work happens asynchronously in the huey container
+- Frontend polls `/actions/status/{task_id}` for completion
 
 ## Configuration
 
@@ -257,6 +301,10 @@ Morning-Mailer/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `MODEL_PROVIDER` | LLM: nvidia/openai/groq/openrouter/google | openrouter |
+| `MODEL_TEMPERATURE` | AI creativity (0-2) | 0.5 |
+| `MAX_TOKENS` | Max response length | 10500 |
+| `REDIS_URL` | Valkey Redis connection string | - |
 | `SCHEDULE_TIME` | Default run time (HH:MM) | 08:00 |
 | `DAYS_THRESHOLD` | Default days to look back | 2 |
 | `MAX_EMAIL_RESULTS` | Default max emails to fetch | 20 |
@@ -264,15 +312,17 @@ Morning-Mailer/
 | `SCHEDULE_CHECK_INTERVAL` | Minutes between checks | 5 |
 | `RETRY_COUNT` | Retry attempts | 2 |
 | `RETRY_DELAY` | Seconds between retries | 60 |
-| `MODEL_PROVIDER` | LLM: nvidia/openai/groq/openrouter/google | openai |
-| `MODEL_TEMPERATURE` | AI creativity (0-1) | 0.5 |
-| `ENV_MODE` | dev/prod: controls run frequency and log verbosity | dev |
+| `ENV_MODE` | dev/prod mode | dev |
 | `EMAIL_HOST_USER` | SMTP fallback username | - |
 | `EMAIL_HOST_PASSWORD` | SMTP fallback password | - |
-| `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth (e.g., ngrok tunnel) | - |
+| `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth | - |
 | `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
 | `WAHA_API_KEY` | WAHA API key | - |
 | `WAHA_SESSION` | WAHA session name | default |
+| `ADMIN_USERNAME` | Admin panel username | admin |
+| `ADMIN_PASSWORD` | Admin panel password | changeme |
+| `SECRET_KEY` | Session secret key | - |
+| `ADMIN_PORT` | Admin panel port | 8000 |
 
 ### Scheduling
 
@@ -285,161 +335,71 @@ Morning-Mailer/
 
 | Mode | Run Frequency | Log Level | Description |
 |------|--------------|-----------|-------------|
-| `dev` | Multiple times/day | `DEBUG` (verbose) | Skips Redis last_run check — runs every SCHEDULE_CHECK_INTERVAL when schedule time has passed. Shows all debug/info logs for troubleshooting. |
-| `prod` | Once per day only | `SUCCESS` (quiet) | Enforces Redis last_run check — runs only once per day per user per channel. Only shows SUCCESS/WARNING/ERROR logs; suppresses repetitive credential loading, per-email debug lines, and intermediate info messages. |
-
-In `prod` mode, logs are kept minimal for production monitoring. In `dev` mode, full debug output is available for local development and testing.
-
-### Per-User Settings
-
-Users can override:
-- `max_email_results` - How many emails to fetch
-- `days_threshold` - How many days back to look
-- `schedule_time` - When to run (HH:MM format)
-
-If not specified, falls back to .env defaults.
-
-## IPython Magic Functions
-
-Inside the container:
-```bash
-docker compose exec huey uv run ipython
-```
-
-| Command | Description |
-|---------|-------------|
-| `%daily_email_summary` | Trigger the daily email fetch task (all users, respects schedule) |
-| `%daily_whatsapp_summary` | Trigger the daily WhatsApp summary task (all users, respects schedule) |
-| `%force_email_summary` | Force email summary for ALL users immediately (ignores schedule) |
-| `%force_whatsapp_summary` | Force WhatsApp summary for ALL users immediately (ignores schedule) |
-| `%send_email_summary <keyword\|email>` | Send email summary to a specific user |
-| `%send_whatsapp_summary <keyword\|mobile>` | Send WhatsApp summary to a specific user |
-| `%check_job_status <job_id>` | Check status of a Huey job |
-| `%setup_oauth <keyword>` | Generate new OAuth token (desktop) |
-| `%setup_web_oauth <keyword>` | Generate new OAuth token (web app) |
-| `%check_tokens` | Show token status for all users (Redis + users.json) |
-| `%send_test_email <subject> <body>` | Send test email (uses MY_EMAIL from .env) |
-| `%send_test_whatsapp <mobile> <message>` | Send test WhatsApp message |
-| `%summarize_whatsapp <keyword>` | Fetch & summarize in WhatsApp format (no send) |
-| `%fetch_calendar <keyword> [days]` | Fetch calendar events for a user |
-| `%run_summarize <keyword>` | Fetch & summarize in HTML email format (no send) |
-| `%run_fetch <keyword>` | Fetch emails directly, print count (no Huey) |
-| `%redis_status` | Check Redis connection health + user count |
-| `%redis_users_list` | List all users stored in Redis |
-| `%redis_users_show <keyword>` | Show one user's full details from Redis |
-| `%redis_users_add --name X --email Y --keyword Z ...` | Add a user to Redis |
-| `%redis_users_update <keyword> --field value ...` | Update a user in Redis |
-| `%redis_users_remove <keyword>` | Remove a user from Redis |
-| `%redis_users_activate <keyword>` | Activate a user in Redis |
-| `%redis_users_deactivate <keyword>` | Deactivate a user in Redis |
-| `%redis_users_import [file]` | Import users from JSON file into Redis |
-| `%redis_users_export [file]` | Export Redis users to JSON file |
-| `%redis_users_clear yes` | Delete ALL users from Redis (requires confirmation) |
-| `%redis_users_fields` | Show all available user fields with types |
-| `%clear_last_run [keyword\|all]` | Clear last run date for testing (use in DEV mode) |
-| `%cls` | Clear terminal screen |
+| `dev` | Multiple times/day | DEBUG | Skips Redis last_run check, verbose logs |
+| `prod` | Once per day only | SUCCESS | Enforces Redis last_run check, minimal logs |
 
 ## WhatsApp Setup (WAHA)
 
-Morning Mailer uses [WAHA](https://waha.devlike.pro) (WhatsApp HTTP API) to send WhatsApp messages. WAHA runs as a Docker container and exposes a REST API to send/receive messages.
+Morning Mailer uses [WAHA](https://waha.devlike.pro) (WhatsApp HTTP API) to send WhatsApp messages.
 
-### Quick WAHA Setup
-
-1. **Pull & configure WAHA** following the guide at [waha.devlike.pro/blog/waha-on-docker/](https://waha.devlike.pro/blog/waha-on-docker/)
-
-2. **Initialize WAHA credentials** (generates API key + dashboard password):
-   ```bash
-   docker compose run --no-deps -v "$(pwd)":/app/env waha init-waha /app/env
-   ```
-   This creates credentials in a `.env` file inside WAHA's directory:
-   - **Dashboard**: `http://localhost:3000/dashboard` (login with `admin / <password>`)
-   - **API Key**: Copy the `WAHA_API_KEY` from the generated `.env`
-
-3. **Start WAHA**:
-   ```bash
-   docker compose up -d
-   ```
-
-4. **Open the dashboard** at [http://localhost:3000/dashboard](http://localhost:3000/dashboard), enter your API key, then scan the QR code with WhatsApp on your phone to link your account.
-
-5. **Configure Morning Mailer's `.env`** with the WAHA credentials:
-   ```bash
-   WAHA_API_URL=http://waha:3000          # WAHA server URL (use container name if in same compose network)
-   WAHA_API_KEY=your-api-key-here         # From WAHA's .env file
-   WAHA_SESSION=default                   # Session name (default: "default")
-   ```
-
-6. **Add `mobile`** field to each user in `users.json` (country code + number, no `+`):
-   ```json
-   { "name": "Paras", "mobile": "919418168860", "use_whatsapp": true }
-   ```
-
-7. **Done!** The WhatsApp task runs on the same schedule as email but uses separate Redis tracking keys, so both delivery channels operate independently.
-
-For detailed WAHA setup (Nginx, HTTPS, production hardening), see the [WAHA on Docker guide](https://waha.devlike.pro/blog/waha-on-docker/).
+1. **Start WAHA**: `docker compose up -d waha`
+2. **Open dashboard**: http://localhost:3000/dashboard
+3. **Scan QR code** with WhatsApp on your phone
+4. **Configure .env** with WAHA credentials
+5. **Add `mobile`** field to users
 
 ## Manual Testing
 
 ```bash
-# Run task directly
-docker compose exec huey python -c "
-from tasks import fetch_emails_with_retry, summarize_emails
-result = fetch_emails_with_retry('default', 20, 2)
-if result['emails']:
-    summary = summarize_emails(result['emails'])
-    print(summary)
-"
+# Trigger daily summary
+docker compose exec huey python -c "from tasks import daily_summary; daily_summary()"
 
-# Send test email
-docker compose exec huey python -c "
-from tasks import send_email
-send_email('your@email.com', 'Test', 'Hello World')
-"
-```
+# Test email sending
+docker compose exec huey python -c "from tasks import send_email; send_email('test@example.com', 'Test', 'Hello')"
 
-## Logs
-
-View real-time logs:
-```bash
-docker compose logs -f huey
+# Check Redis status
+docker compose exec huey python -c "import redis; r = redis.from_url('redis://:testpass@valkey:6379/0'); print(r.ping())"
 ```
 
 ## Troubleshooting
 
-### No module named 'xxx'
+### Admin panel not loading
 ```bash
-docker compose build --no-cache
-docker compose up -d
+docker compose logs app
+docker compose restart app
+```
+
+### Huey not processing tasks
+```bash
+docker compose logs huey
+docker compose restart huey
 ```
 
 ### Gmail credentials not found
 - Ensure `gauth/client_secret.json` exists
 - Ensure `gauth/tokens/token_<keyword>.json` exists for each user
 
-### Redis connection refused
-- Check `REDIS_URL` in `.env`
-- Ensure container can reach the Valkey Redis instance
-
 ### Email sending fails
 - Check `EMAIL_HOST_USER` and `EMAIL_HOST_PASSWORD` in `.env`
-- Or set per-user `smtp_host_user` and `smtp_host_password` in users.json
 - Use Gmail App Password (not your regular password)
 
-### OAuth token not found for user
+### OAuth token not found
 ```bash
 # Generate new token
 uv run python -m modules.fetch_emails setup <keyword>
-# Or use IPython
-%setup_oauth keyword
+# Or via admin panel: http://localhost:8000/users
 ```
 
 ## Tech Stack
 
 - **Task Queue**: Huey (Redis-backed)
+- **Admin Panel**: FastAPI + Jinja2 + Bootstrap 5
 - **Gmail API**: google-api-python-client
+- **Calendar API**: google-api-python-client
 - **LLM**: LangChain (NVIDIA, OpenAI, Groq, OpenRouter, Google)
 - **Logging**: loguru
 - **Email**: smtplib (SMTP)
+- **WhatsApp**: WAHA (WhatsApp HTTP API)
 - **Container**: Docker + Docker Compose
 
 ## License

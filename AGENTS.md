@@ -2,75 +2,153 @@
 
 ## Project Overview
 
-Morning Mailer is an AI-powered **multi-user** email summarization system that automatically fetches emails from multiple Gmail accounts at scheduled times, generates summaries using Large Language Models, and delivers them via email (HTML) and/or WhatsApp (plain text) to each user.
+Morning Mailer is an AI-powered **multi-user** email summarization system with a **FastAPI admin panel**. It automatically fetches emails from multiple Gmail accounts at scheduled times, generates summaries using Large Language Models, and delivers them via email (HTML) and/or WhatsApp (plain text) to each user.
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
-│  Gmail API     │────▶│ Huey Worker  │────▶│  LLM (NVIDIA/
-│  (Email Fetch) │     │ (Scheduler)  │     │  OpenAI/    │
-└─────────────────┘     └──────────────┘     │  Groq)       │
-          │                      │              └─────────────┘
-          │              ┌──────┴──────┐
-          │              │   Redis      │
-           │              │ (Valkey)   │
-          │              └─────────────┘
-          ▼
-    ┌──────────────────────────────────────┐
-    │         Summary Output               │
-    │  - HTML summaries via SMTP email     │
-    │  - Plain text via WhatsApp (WAHA)    │
-    │  - Per-user channel toggles          │
-    │  - Color-coded sections (email)      │
-    └──────────────────────────────────────┘
+┌──────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Admin Panel │────▶│    Huey      │────▶│  LLM (NVIDIA/
+│  (FastAPI)   │     │  (Worker)    │     │  OpenAI/    │
+│  Port 8000   │     │              │     │  Groq)       │
+└──────────────┘     └──────────────┘     └─────────────┘
+       │                     │
+       │              ┌──────┴──────┐
+       │              │   Redis      │
+       │              │  (Valkey)   │
+       │              └─────────────┘
+       ▼
+┌──────────────┐
+│    WAHA      │
+│  (WhatsApp)  │
+│  Port 3000   │
+└──────────────┘
 ```
 
-## Key Features
+### Container Responsibilities
 
-1. **Multi-User Support**: Multiple users with separate Gmail accounts
-2. **Per-User Scheduling**: Each user can have their own schedule_time
-3. **Parallel Processing**: Users processed concurrently with ThreadPoolExecutor
-4. **Smart Fallbacks**: Global defaults when per-user settings not specified
-5. **Token Management**: Single OAuth credentials + multiple tokens
-6. **DEV/PROD Mode**: DEV = run multiple times/day (verbose DEBUG logs), PROD = run once/day (quiet SUCCESS-level logs)
-7. **WhatsApp Integration**: Send summaries via WhatsApp using WAHA API
-8. **Per-Channel Toggles**: `use_email` and `use_whatsapp` per-user booleans
-9. **Calendar Integration**: Optional Google Calendar event fetching (`fetch_calendar` per-user toggle)
+| Container | Purpose | Does | Does NOT |
+|-----------|---------|------|----------|
+| `app` | FastAPI admin panel | UI, user CRUD, enqueue huey tasks, OAuth flow | Execute heavy tasks (fetching, LLM, sending) |
+| `huey` | Task queue consumer | Process all huey tasks (fetch emails, summarize, send) | Serve UI |
+| `valkey` | Redis | Task queue, user storage, scheduling state | - |
+| `waha` | WhatsApp API | Send WhatsApp messages | - |
+
+### Key Architecture Decision
+
+The admin panel (`app`) **never executes heavy work directly**. When a user clicks "Send Email Summary":
+1. Admin panel calls `services.run_send_email_summary(keyword)`
+2. This calls `tasks.huey_send_email_to_user(keyword)` — a `@huey.task` decorated function
+3. Huey enqueues the task to Redis and returns a `TaskWrapper`
+4. Admin panel returns `task_id` to the frontend
+5. Huey container picks up the task and executes it
+6. Frontend polls `/actions/status/{task_id}` for completion
 
 ## Core Components
 
-### 1. tasks.py - Task Scheduler & Main Logic
-- **Purpose**: Orchestrates email fetching, summarization, and sending for all users
+### 1. tasks.py - Huey Tasks & Scheduling
+- **Purpose**: Defines all huey tasks and scheduling logic
+- **Key Pattern**: LLM agent is **lazy-initialized** — `AGENT = None` at module level, `get_agent()` initializes on first use. This prevents the app container (admin panel) from loading the LLM when it only needs to import task functions.
 - **Key Functions**:
-  - `load_users()`: Loads active users from Redis first, falls back to users.json, then .env
+  - `get_agent()`: Lazy-initializes LLM (only in huey container, never in app)
+  - `load_users()`: Loads active users from Redis first, falls back to users.json
   - `get_user_settings(user)`: Gets per-user max_email_results & days_threshold
-  - `should_run_today(user, global_schedule_time, redis_prefix="")`: Checks if user's schedule time has passed today (redis_prefix isolates email vs WhatsApp tracking)
-  - `get_user_last_run_date(keyword)`: Gets last processed date from Redis
-  - `set_user_last_run_date(keyword, date_str)`: Updates last processed date in Redis
-  - `fetch_emails_with_retry(keyword, max_results, days_threshold)`: Fetches with per-user settings
-  - `process_user(user, global_schedule_time)`: Full pipeline for one user
+  - `should_run_today(user, global_schedule_time, redis_prefix="")`: Checks if user's schedule time has passed today
+  - `fetch_emails_with_retry(keyword, max_results, days_threshold)`: Fetches with retry logic
+  - `fetch_calendar_events_with_retry(keyword, days, max_results)`: Calendar fetch with retry
+  - `process_user(user, global_schedule_time)`: Full pipeline for one user (email)
   - `send_email(to, subject, body, is_html, smtp_user, smtp_password)`: Sends via SMTP
   - `send_whatsapp(mobile, text)`: Sends WhatsApp via WAHA API
-  - `daily_email_summary()`: Huey periodic task - runs every SCHEDULE_CHECK_INTERVAL minutes (email delivery)
-  - `daily_whatsapp_summary()`: Huey periodic task - WhatsApp delivery (separate Redis tracking, respects use_whatsapp)
+
+- **Huey Tasks (enqueued by admin panel)**:
+  - `huey_send_email_to_user(keyword)`: Fetch, summarize, send email to one user
+  - `huey_send_whatsapp_to_user(keyword)`: Fetch, summarize, send WhatsApp to one user
+  - `huey_force_email_all()`: Force email for ALL users
+  - `huey_force_whatsapp_all()`: Force WhatsApp for ALL users
+  - `huey_fetch_calendar_and_send_email(keyword, days)`: Calendar → email
+  - `huey_fetch_calendar_and_send_whatsapp(keyword, days)`: Calendar → WhatsApp
+  - `huey_fetch_calendar_and_send_both(keyword, days)`: Calendar → both
+  - `huey_test_send_email(subject, body)`: Test email
+  - `huey_test_send_whatsapp(mobile, message)`: Test WhatsApp
+
+- **Periodic Tasks**:
+  - `daily_summary()`: Unified task — checks all users, processes email and/or WhatsApp per user preference. Also prints startup summary on first run (guarded by `_startup_summary_printed` flag).
 
 - **Scheduling Logic**:
   - Task runs every N minutes (SCHEDULE_CHECK_INTERVAL, default: 5)
   - For each user, checks if current time >= user's schedule_time
-  - Email task tracks processed in Redis (key: `morning_mailer:last_run:<keyword>`)
-  - WhatsApp task tracks separately (key: `morning_mailer:whatsapp_last_run:<keyword>`)
-  - `use_email` / `use_whatsapp` per-user booleans control which channel runs
+  - Email tracking key: `morning_mailer:last_run:<keyword>`
+  - WhatsApp tracking key: `morning_mailer:whatsapp_last_run:<keyword>`
 
-### 2. modules/fetch_emails.py - Gmail Integration
+### 2. admin/ - FastAPI Admin Panel
+
+#### 2.1 admin/main.py - App Entry
+- Creates FastAPI app with middleware, static files, templates
+- Mounts all routers
+- Serves dashboard at `/`
+
+#### 2.2 admin/config.py - Settings
+- Pydantic Settings loaded from `.env`
+- Key settings: `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `SECRET_KEY`, `REDIS_URL`
+
+#### 2.3 admin/auth.py - Authentication
+- Session-based auth (not JWT)
+- CSRF protection via double-submit cookie
+- `AuthMiddleware` intercepts requests, checks session
+- Login/logout endpoints
+
+#### 2.4 admin/models.py - Pydantic Models
+- `UserCreate`, `UserUpdate` — user form validation
+- `ActionRequest`, `ModelSwitchRequest` — action form validation
+
+#### 2.5 admin/services.py - Business Logic
+- **Purpose**: Thin layer between routes and tasks module
+- **Key Pattern**: All action functions call `tasks.huey_*()` which enqueues to huey
+- **Key Functions**:
+  - `list_users()`, `get_user()`, `create_user()`, etc. — User CRUD (Redis or users.json fallback)
+  - `run_send_email_summary(keyword)` → enqueues `huey_send_email_to_user`
+  - `run_send_whatsapp_summary(keyword)` → enqueues `huey_send_whatsapp_to_user`
+  - `run_force_email_summary()` → enqueues `huey_force_email_all`
+  - `check_task_status(task_id)` — polls huey for task result
+  - `get_redis_status()` — Redis connection info
+  - `get_scheduler_status()` — Scheduler config from tasks module
+  - `generate_oauth_url(keyword)` — Creates Google OAuth URL
+  - `exchange_oauth_code(code, keyword)` — Exchanges auth code for token
+- **Note**: Tasks module is imported once at startup (no `importlib.reload`) to avoid re-initializing module-level code in the app container.
+
+#### 2.6 admin/routes/ - API Routes
+
+| Router | Prefix | Purpose |
+|--------|--------|---------|
+| `auth_routes` | `/login`, `/logout` | Login/logout with CSRF |
+| `user_routes` | `/users` | User CRUD, search/sort, import/export |
+| `action_routes` | `/actions` | Trigger email/whatsapp/calendar actions, test send, model switch |
+| `oauth_routes` | `/oauth` | OAuth start + callback |
+| `system_routes` | `/` | Redis status, scheduler status, tokens status |
+
+#### 2.7 admin/templates/ - Jinja2 Templates
+
+| Template | Purpose |
+|----------|---------|
+| `base.html` | Base layout (navbar, Bootstrap 5, glassmorphism theme) |
+| `login.html` | Login page (no navbar, centered card) |
+| `dashboard.html` | Stats cards, quick actions, scheduler config, users overview |
+| `users.html` | User list with search/sort/filter, action buttons |
+| `user_form.html` | Add/edit user form |
+| `oauth_redirect.html` | Redirects to Google OAuth |
+| `oauth_result.html` | Shows OAuth success/failure |
+
+#### 2.8 admin/static/ - Static Files
+- `css/style.css` — Purple gradient glassmorphism theme
+- `js/app.js` — Toast notifications, action handlers, task status polling
+
+### 3. modules/fetch_emails.py - Gmail Integration
 - **Purpose**: Handles all Gmail API interactions
 - **Key Functions**:
-  - `get_gmail_service(keyword)`: Initializes Gmail API client with OAuth (per keyword)
+  - `get_gmail_service(keyword)`: Initializes Gmail API client with OAuth
   - `fetch_emails(keyword, max_results, query, date_from, date_to, ...)`: Main API
   - `get_token_path(keyword)`: Returns path to token_<keyword>.json
-  - `get_credentials_path()`: Returns path to client_secret.json (shared)
-  - `load_users()`: Loads users from users.json
-  - `parse_date()`, `clean_text()`, `extract_plain_text()`: Utilities
+  - `get_credentials_path()`: Returns path to client_secret.json
 
 - **OAuth Structure** (SINGLE SECRET, MULTIPLE TOKENS):
   ```
@@ -79,31 +157,28 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
   ├── client_secret_web.json     ← Web OAuth app (recommended)
   └── tokens/
       ├── token_dhimanparas20.json  ← User 1's token
-      ├── token_bobyHP07.json        ← User 2's token
-      └── token_lgtvmistanbul.json   ← User 3's token
+      ├── token_bobyHP07.json       ← User 2's token
+      └── ...
   ```
 
-- **Parallel Fetching**: Uses ThreadPoolExecutor for thread-safe email fetching
+### 4. modules/web_auth.py - Web OAuth Setup
+- Handles OAuth flow for web/remote setups
+- Uses itcyou tunnel for callback URL
+- Exchanges authorization code for token
 
-### 2.1 modules/web_auth.py - Web OAuth Setup
-
-### 2.2 modules/fetch_calendar.py - Google Calendar Integration
+### 5. modules/fetch_calendar.py - Google Calendar Integration
 - **Purpose**: Handles all Google Calendar API interactions
 - **Key Functions**:
-  - `get_calendar_service(keyword)`: Initializes Calendar API client with OAuth (per keyword)
-  - `fetch_events(keyword, calendar_id, time_min, time_max, max_results, ...)`: Full-featured event fetcher
-  - `fetch_upcoming_events(keyword, days, max_results)`: Convenience function for next N days
+  - `get_calendar_service(keyword)`: Initializes Calendar API client
+  - `fetch_events(keyword, calendar_id, time_min, time_max, max_results, ...)`: Full event fetcher
+  - `fetch_upcoming_events(keyword, days, max_results)`: Convenience for next N days
   - `has_valid_token(keyword)`: Checks if OAuth token exists
 - **Token Sharing**: Uses the same `token_<keyword>.json` as Gmail
-- **OAuth Scope**: Requires `calendar.readonly` (auto-added to SCOPES)
-- **Event Format**: Returns clean dicts with summary, start/end, location, attendees, etc.
-- **CLI**: `python -m modules.fetch_calendar check|fetch [keyword] [days]`
+- **OAuth Scope**: Requires `calendar.readonly`
 
-### 2.3 modules/redis_users.py - Redis User Storage
-- **Purpose**: Store and manage users as Redis hashes (alternative to users.json)
-- **Key Pattern**: `USERS_CONFIG:<keyword>` — each user is a Redis hash, keywords tracked in `USERS_CONFIG:keywords` SET
-- **Key Classes**:
-  - `RedisUserManager(r)`: Full CRUD with pipelined bulk reads/writes
+### 6. modules/redis_users.py - Redis User Storage
+- **Purpose**: Store and manage users as Redis hashes
+- **Key Pattern**: `USERS_CONFIG:<keyword>` — each user is a Redis hash
 - **Key Methods**:
   - `add_or_update(user_dict)`: Insert or replace a user hash
   - `get(keyword)`: HGETALL → typed Python dict
@@ -115,62 +190,144 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
   - `clear_all()`: Delete all users from Redis
   - `count()` / `exists(keyword)`: Cardinality checkers
 - **Type Handling**: Bools stored as `1`/`0`, ints as strings, rehydrated on read
-- **CLI Tool**: `cli_users.py` (argparse + Rich tables) — list, show, add, update, remove, activate, deactivate, import, export, clear, fields
-- **IPython Magics**: `%redis_users_list`, `%redis_users_show`, `%redis_users_add`, `%redis_users_update`, `%redis_users_remove`, `%redis_users_activate`, `%redis_users_deactivate`, `%redis_users_import`, `%redis_users_export`, `%redis_users_clear`, `%redis_users_fields`
-- **Fallback**: `tasks.load_users()` tries Redis first; if empty/error, falls back to `users.json` → `.env` defaults
 
-### 3. modules/agent_mod.py - LLM Integration
+### 7. modules/agent_mod.py - LLM Integration
 - **Purpose**: Wrapper for LLM summarization
 - **Key Functions**:
   - `init()`: Initializes LLM from config (MODEL_PROVIDER)
   - `summarize_emails(emails, prompt)`: Generates HTML summary
-
+  - `hot_switch_model(provider, model_name, temperature)`: Hot-swap LLM at runtime
 - **Supported Providers**: nvidia, openai, groq, openrouter, google
 
-### 4. modules/prompt.py - Prompt Templates
-- **Purpose**: Defines LLM output format for both email and WhatsApp
+### 8. modules/prompt.py - Prompt Templates
 - **Variables**:
   - `EMAIL_SYSTEM_PROMPT`: HTML summary format with inline CSS
   - `WHATSAPP_SYSTEM_PROMPT`: Plain-text WhatsApp format with *bold*, _italic_, emoji markers
+  - `CALENDAR_EMAIL_PROMPT`: Calendar events → HTML email format
+  - `CALENDAR_WHATSAPP_PROMPT`: Calendar events → WhatsApp format
   - `SYSTEM_PROMPT`: Backward-compat alias for EMAIL_SYSTEM_PROMPT
-- **Features**:
-  - Clean, minimal layout with inline CSS (email)
-  - Color-coded sections (red=critical, green=important, blue=info)
-  - WhatsApp-compatible formatting (bold, italic, emojis, bullets)
-  - Minimal token usage for cost efficiency
 
-### 5. modules/ipython_startup.py - Magic Functions
-- **Available Magic Functions**:
-  - `%daily_email_summary`: Trigger the task (all users, respects schedule)
-  - `%daily_whatsapp_summary`: Trigger WhatsApp summary task (all users, respects schedule)
-  - `%force_email_summary`: Force email summary for ALL users immediately (ignores schedule)
-  - `%force_whatsapp_summary`: Force WhatsApp summary for ALL users immediately (ignores schedule)
-  - `%send_email_summary <keyword|email>`: Send email summary to a specific user only
-  - `%send_whatsapp_summary <keyword|mobile>`: Send WhatsApp summary to a specific user only
-  - `%check_job_status <job_id>`: Check Huey job
-  - `%setup_oauth <keyword>`: Generate new token (desktop)
-  - `%setup_web_oauth <keyword>`: Generate new token (web app)
-  - `%check_tokens`: Show token status for all users (Redis + users.json)
-  - `%send_test_email <subject> <body>`: Test SMTP
-  - `%send_test_whatsapp <mobile> <message>`: Test WhatsApp message
-  - `%summarize_whatsapp <keyword>`: Fetch & summarize in WhatsApp format
-  - `%run_summarize <keyword>`: Fetch & summarize in HTML email format
-  - `%run_fetch <keyword>`: Fetch emails directly (no Huey)
-  - `%fetch_calendar <keyword> [days]`: Fetch calendar events for a user
-  - `%redis_status`: Check Redis connection
-  - `%redis_users_list`: List all users in Redis
-  - `%redis_users_show <keyword>`: Show one user's details
-  - `%redis_users_add --name X --email Y --keyword Z ...`: Add user to Redis
-  - `%redis_users_update <keyword> --field value ...`: Update user in Redis
-  - `%redis_users_remove <keyword>`: Remove user from Redis
-  - `%redis_users_activate <keyword>`: Activate a user in Redis
-  - `%redis_users_deactivate <keyword>`: Deactivate a user in Redis
-  - `%redis_users_import [file]`: Import users.json into Redis
-  - `%redis_users_export [file]`: Export Redis users to JSON
-  - `%redis_users_clear yes`: Delete ALL users from Redis
-  - `%redis_users_fields`: Show available user fields and types
-  - `%clear_last_run [keyword|all]`: Clear last run date (use in DEV mode)
-  - `%cls`: Clear terminal
+### 9. modules/ipython_startup.py - Magic Functions
+- Available in IPython inside the huey container
+- Provides `%daily_email_summary`, `%send_email_summary <keyword>`, etc.
+
+## File Structure
+
+```
+Morning-Mailer/
+├── tasks.py                    # Huey tasks & scheduling
+├── admin/                      # FastAPI admin panel
+│   ├── main.py                 # App entry point
+│   ├── config.py               # Settings from .env
+│   ├── auth.py                 # Session auth + CSRF
+│   ├── models.py               # Pydantic models
+│   ├── services.py             # Business logic (enqueues huey tasks)
+│   ├── routes/
+│   │   ├── auth_routes.py      # Login/logout
+│   │   ├── user_routes.py      # User CRUD
+│   │   ├── action_routes.py    # Trigger actions
+│   │   ├── oauth_routes.py     # OAuth flow
+│   │   └── system_routes.py    # Redis/scheduler status
+│   ├── templates/              # Jinja2 HTML templates
+│   └── static/                 # CSS + JS
+├── modules/
+│   ├── fetch_emails.py         # Gmail API
+│   ├── fetch_calendar.py       # Google Calendar API
+│   ├── agent_mod.py            # LLM wrapper
+│   ├── agent_utils.py          # LLM factory
+│   ├── prompt.py               # Prompt templates
+│   ├── logger.py               # Logging
+│   ├── generics.py             # Utilities
+│   ├── redis_users.py          # Redis user storage
+│   ├── web_auth.py             # Web OAuth setup
+│   └── ipython_startup.py      # IPython magics
+├── cli_users.py                # CLI for Redis user management
+├── gauth/
+│   ├── client_secret.json      # Desktop OAuth (shared)
+│   ├── client_secret_web.json  # Web OAuth (shared)
+│   └── tokens/                 # One token per user
+├── users.json                  # User definitions (fallback)
+├── .env                        # Configuration
+├── Dockerfile                  # Container image
+├── compose.yml                 # Docker orchestration
+└── pyproject.toml              # Dependencies
+```
+
+## Running Commands
+
+### Docker Compose
+```bash
+# Start all services
+docker compose up -d
+
+# Start specific service
+docker compose up -d app
+docker compose up -d huey
+
+# Rebuild and start
+docker compose up -d --build
+
+# Stop all
+docker compose down
+
+# Check logs
+docker compose logs -f app      # Admin panel
+docker compose logs -f huey     # Task worker
+docker compose logs -f          # All services
+```
+
+### Admin Panel
+```bash
+# Access
+open http://localhost:8000
+
+# Default credentials
+Username: admin
+Password: changeme
+
+# Rebuild admin panel only
+docker compose up -d --build app
+```
+
+### CLI Tools
+```bash
+# User management
+python cli_users.py list
+python cli_users.py add --name "Name" --email "email@gmail.com" --keyword myname
+python cli_users.py update myname --schedule-time "09:00"
+python cli_users.py remove myname
+
+# OAuth setup
+uv run python -m modules.fetch_emails setup <keyword>
+uv run python -m modules.fetch_emails check
+
+# Web OAuth
+uv run python -m modules.web_auth <keyword>
+```
+
+### IPython (inside huey container)
+```bash
+docker compose exec huey uv run ipython
+
+# Available magics:
+%daily_email_summary
+%send_email_summary <keyword>
+%send_whatsapp_summary <keyword>
+%force_email_summary
+%force_whatsapp_summary
+%setup_oauth <keyword>
+%check_tokens
+%fetch_calendar <keyword> [days]
+%redis_status
+%redis_users_list
+%clear_last_run [keyword|all]
+```
+
+### Direct Python (inside huey container)
+```bash
+docker compose exec huey python -c "from tasks import daily_summary; daily_summary()"
+docker compose exec huey python -c "from tasks import send_email; send_email('test@example.com', 'Test', 'Hello')"
+```
 
 ## Data Flow
 
@@ -178,14 +335,12 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 1. Huey scheduler triggers every SCHEDULE_CHECK_INTERVAL minutes
            │
            ▼
-2. daily_email_summary() called
+2. daily_summary() called
            │
            ▼
-3. For each active user in Redis (USERS_CONFIG:<keyword>) or users.json:
+3. For each active user in Redis:
     ├── Check if current time >= user's schedule_time
-    ├── Check ENV_MODE:
-    │    ├── dev: skip last_run check → always eligible
-    │    └── prod: check Redis (key: morning_mailer:last_run:<keyword>)
+    ├── Check use_email / use_whatsapp per-user booleans
     └── If eligible → add to eligible_users
            │
            ▼
@@ -193,99 +348,45 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
            │
            ▼
 5. For each eligible user:
-    ├── fetch_emails_with_retry(keyword, user_max_results, user_days_threshold)
-    │    - Uses user's max_email_results (or global default)
-    │    - Uses user's days_threshold (or global default)
-    ├── IF user.fetch_calendar:
-    │    └── fetch_calendar_events_with_retry(keyword, days_threshold)
-    ├── summarize_emails(emails, calendar_events=calendar_events)
-    ├── send_email(to=user_email, smtp_host=user_smtp)
-    └── set_user_last_run_date(keyword, today)
+    ├── Fetch emails (fetch_emails_with_retry)
+    ├── Fetch calendar events if fetch_calendar=true
+    ├── Summarize with LLM (email or WhatsApp prompt)
+    ├── Send via enabled channels
+    └── Update Redis last_run tracking
+```
+
+### Admin Panel Action Flow
+```
+1. User clicks "Send Email" in admin panel
            │
            ▼
-6. Return: {date, time, eligible_users, processed, total_emails_fetched, results}
+2. POST /actions/email/send/{keyword}
+           │
+           ▼
+3. services.run_send_email_summary(keyword)
+           │
+           ▼
+4. tasks.huey_send_email_to_user(keyword) — @huey.task
+           │
+           ▼
+5. Task enqueued to Redis, returns task_id
+           │
+           ▼
+6. Response: {"ok": true, "result": {"task_id": "abc123", "status": "enqueued"}}
+           │
+           ▼
+7. Huey container picks up task, executes:
+    - Fetch emails
+    - Summarize with LLM
+    - Send email
+    - Return result
+           │
+           ▼
+8. Frontend polls GET /actions/status/abc123
+           │
+           ▼
+9. Response: {"task_id": "abc123", "status": "finished", "result": {...}}
 ```
-
-## File Structure
-
-```
-Morning-Mailer/
-├── tasks.py                    # Main scheduler (per-user scheduling)
-├── modules/
-│   ├── fetch_emails.py         # Gmail API (keyword-based tokens)
-│   ├── fetch_calendar.py       # Google Calendar API (keyword-based tokens)
-│   ├── agent_mod.py            # LLM wrapper
-│   ├── agent_utils.py          # LLM factory
-│   ├── prompt.py               # Simple HTML template
-│   ├── logger.py              # Logging
-│   ├── generics.py            # Utilities
-│   ├── redis_users.py         # Redis user storage & CRUD
-│   └── ipython_startup.py     # IPython magic functions
-├── cli_users.py                # CLI for Redis user management
-├── gauth/
-│   ├── client_secret.json      # Single OAuth credentials (shared)
-│   └── tokens/                 # One token per user
-│       ├── token_<keyword>.json
-│       └── ...
-├── users.json                  # Multi-user configuration
-├── users.json.sample           # User template
-├── .env                        # Global settings
-├── .env.sample                 # Environment template
-├── oauth_setup.sh              # OAuth setup script
-├── compose.yml                 # Docker orchestration
-└── pyproject.toml              # Dependencies
-```
-
-## Multi-User Support
-
-### users.json Schema
-
-```json
-[
-  {
-    "name": "Paras",
-    "email": "dhimanparas20@gmail.com",
-    "keyword": "dhimanparas20",
-    "active": true,
-    "use_email": true,
-    "use_whatsapp": true,
-    "fetch_calendar": true,
-    "max_email_results": 20,      // optional, falls back to .env
-    "days_threshold": 2,            // optional, falls back to .env
-    "schedule_time": "08:00",       // optional, falls back to .env SCHEDULE_TIME
-    "smtp_host_user": "user@gmail.com",   // optional, falls back to .env
-    "smtp_host_password": "xxxx",          // optional, falls back to .env
-    "mobile": "919418168860"               // WhatsApp number (country code, no +)
-  }
-]
-```
-
-### Per-User Fields:
-| Field | Required | Default | Description |
-|-------|----------|---------|--------------|
-| `name` | Yes | - | Display name |
-| `email` | Yes | - | Where to send summary |
-| `keyword` | Yes | - | Links to token_<keyword>.json |
-| `active` | No | true | If false, user is skipped |
-| `use_email` | No | true | Enable/disable email delivery |
-| `use_whatsapp` | No | true | Enable/disable WhatsApp delivery |
-| `fetch_calendar` | No | false | Include Google Calendar events in summary |
-| `max_email_results` | No | .env MAX_EMAIL_RESULTS | Max emails to fetch |
-| `days_threshold` | No | .env DAYS_THRESHOLD | Days to look back |
-| `schedule_time` | No | .env SCHEDULE_TIME | When to run (HH:MM) |
-| `smtp_host_user` | No | .env EMAIL_HOST_USER | Custom SMTP sender |
-| `smtp_host_password` | No | .env EMAIL_HOST_PASSWORD | Custom SMTP password |
-| `mobile` | No | - | WhatsApp number with country code |
-
-### Scheduling Logic:
-- Task runs every SCHEDULE_CHECK_INTERVAL minutes (default: 5)
-- At each run, checks each user:
-  - If current time >= user's schedule_time (or global SCHEDULE_TIME)
-  - If ENV_MODE=dev: always run (skip last_run check) + verbose DEBUG logs
-  - If ENV_MODE=prod: only if hasn't run today (tracked in Redis) + quiet SUCCESS-level logs
-  - THEN process that user in parallel
-- Each user runs once per day in PROD mode, multiple times in DEV mode
-- Users without schedule_time use global SCHEDULE_TIME from .env
 
 ## Key Configuration
 
@@ -293,139 +394,76 @@ Morning-Mailer/
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `MODEL_PROVIDER` | LLM provider (nvidia/openai/groq/openrouter/google) | openrouter |
+| `MODEL_PROVIDER` | LLM provider | openrouter |
 | `OPENAI_MODEL` | Model for OpenAI | gpt-4.1-nano |
 | `MODEL_TEMPERATURE` | LLM creativity | 0.5 |
 | `MAX_TOKENS` | Max response length | 10500 |
-| `REDIS_URL` | Valkey Redis connection string | (your URL) |
-| `SCHEDULE_TIME` | Default run time (when user has no schedule_time) | 08:00 |
-| `DAYS_THRESHOLD` | Default look back period | 2 |
-| `MAX_EMAIL_RESULTS` | Default max emails to fetch | 20 |
-| `MAX_THREAD_WORKERS` | Parallel users/processes | 5 |
-| `SCHEDULE_CHECK_INTERVAL` | Minutes between scheduler checks | 5 |
-| `RETRY_COUNT` | Retry attempts on failure | 2 |
+| `REDIS_URL` | Valkey Redis connection | - |
+| `SCHEDULE_TIME` | Default run time | 08:00 |
+| `DAYS_THRESHOLD` | Default look back | 2 |
+| `MAX_EMAIL_RESULTS` | Default max emails | 20 |
+| `MAX_THREAD_WORKERS` | Parallel users | 5 |
+| `SCHEDULE_CHECK_INTERVAL` | Minutes between checks | 5 |
+| `RETRY_COUNT` | Retry attempts | 2 |
 | `RETRY_DELAY` | Seconds between retries | 60 |
-| `ENV_MODE` | dev = run multiple times + verbose logs, prod = run once/day + quiet logs | dev |
-| `EMAIL_HOST_USER` | Fallback SMTP username | (your email) |
-| `EMAIL_HOST_PASSWORD` | Fallback SMTP password | (app password) |
-| `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth (e.g., ngrok tunnel) | - |
+| `ENV_MODE` | dev/prod mode | dev |
+| `EMAIL_HOST_USER` | SMTP username | - |
+| `EMAIL_HOST_PASSWORD` | SMTP password | - |
+| `OAUTH_CALLBACK_URL` | OAuth callback URL | - |
 | `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
 | `WAHA_API_KEY` | WAHA API key | - |
 | `WAHA_SESSION` | WAHA session name | default |
+| `ADMIN_USERNAME` | Admin panel username | admin |
+| `ADMIN_PASSWORD` | Admin panel password | changeme |
+| `SECRET_KEY` | Session secret key | - |
+| `ADMIN_PORT` | Admin panel port | 8000 |
+
+### Scheduling Logic:
+- Task runs every SCHEDULE_CHECK_INTERVAL minutes (default: 5)
+- At each run, checks each user:
+  - If current time >= user's schedule_time
+  - If ENV_MODE=dev: always run (skip last_run check)
+  - If ENV_MODE=prod: only if hasn't run today
+- Email and WhatsApp tracked separately in Redis
+- Each user runs once per day in PROD, multiple times in DEV
 
 ## Token Setup
 
-### Option A: Desktop OAuth (local machine)
+### Option A: Desktop OAuth
 ```bash
-# Using CLI
 uv run python -m modules.fetch_emails setup <keyword>
-
-# Examples:
-uv run python -m modules.fetch_emails setup work
-uv run python -m modules.fetch_emails setup bobyHP07
-uv run python -m modules.fetch_emails setup myname
-
-# Using IPython
-%setup_oauth work
 ```
 
-### Option B: Web OAuth (remote/server via itcyou)
+### Option B: Web OAuth (admin panel)
+1. Open http://localhost:8000/users
+2. Click red X icon next to user
+3. Complete Google OAuth flow
 
-For server/remote setups without browser access, use Web OAuth with itcyou tunnel:
-
-1. **Start itcyou tunnel** (choose your subdomain):
+### Option C: IPython
 ```bash
-docker run -d --rm --network host --name itcyou \
-  -e ITCYOU_PORT=47433 \
-  -e ITCYOU_SUBDOMAIN=morning-mailer \
-  dhimanparas20/itcyou:latest
-```
-
-2. **Configure Google Cloud Console** with your domain:
-   - Authorized JavaScript origin: `https://morning-mailer.it.cyou`
-   - Authorized redirect URI: `https://morning-mailer.it.cyou/callback`
-
-3. **Download OAuth JSON** → save as `gauth/client_secret_web.json`
-
-4. **Set callback URL in .env**:
-```bash
-OAUTH_CALLBACK_URL=https://morning-mailer.it.cyou/callback
-```
-
-5. **Generate token**:
-```bash
-# CLI
-uv run python -m modules.web_auth <keyword>
-
-# Or in IPython
-%setup_web_oauth keyword
-```
-
-### Checking Token Status:
-```bash
-# CLI
-uv run python -m modules.fetch_emails check
-
-# IPython
+docker compose exec huey uv run ipython
+%setup_oauth <keyword>
 %check_tokens
 ```
 
-This will show which users have tokens and which need OAuth setup.
+## Dependencies
 
-## IPython Magic Functions
-
-In IPython (`docker compose exec huey uv run ipython`):
-
-| Magic | Usage | Description |
-|-------|-------|-------------|
-| `%daily_email_summary` | `%daily_email_summary` | Trigger the scheduled task (all users) |
-| `%daily_whatsapp_summary` | `%daily_whatsapp_summary` | Trigger WhatsApp summary task (all users) |
-| `%send_email_summary` | `%send_email_summary <keyword\|email>` | Send email summary to a specific user |
-| `%send_whatsapp_summary` | `%send_whatsapp_summary <keyword\|mobile>` | Send WhatsApp summary to a specific user |
-| `%check_job_status` | `%check_job_status <job_id>` | Check Huey job status |
-| `%setup_oauth` | `%setup_oauth <keyword>` | Generate new token (desktop) |
-| `%setup_web_oauth` | `%setup_web_oauth <keyword>` | Generate new token (web app) |
-| `%check_tokens` | `%check_tokens` | Show all users' token status |
-| `%send_test_email` | `%send_test_email <subject> <body>` | Send test email |
-| `%send_test_whatsapp` | `%send_test_whatsapp <mobile> <message>` | Send test WhatsApp message |
-| `%summarize_whatsapp` | `%summarize_whatsapp <keyword>` | Fetch & summarize in WhatsApp format |
-| `%fetch_calendar` | `%fetch_calendar <keyword> [days]` | Fetch calendar events for a user |
-| `%redis_status` | `%redis_status` | Check Redis connection |
-| `%clear_last_run` | `%redis_users_clear yes` | Delete ALL users from Redis |
-| `%redis_users_fields` | Show all available user fields |
-| `%clear_last_run [keyword\|all]` | Clear last run date (use in DEV mode) |
-| `%run_fetch` | `%run_fetch` | Direct fetch (no Huey) |
-| `%cls` | `%cls` | Clear terminal |
-
-## Common Tasks
-
-### Manual Trigger:
-```bash
-docker compose exec huey python -c "from tasks import daily_email_summary; daily_email_summary()"
-```
-
-### Check Logs:
-```bash
-docker compose logs -f huey
-```
-
-### Rebuild Container:
-```bash
-docker compose build --no-cache && docker compose up -d
-```
-
-### Test Fetch for Specific User:
-```python
-from tasks import fetch_emails_with_retry
-result = fetch_emails_with_retry("dhimanparas20", 20, 2)
-print(result['count'], "emails")
-```
-
-### Test Send Email:
-```python
-from tasks import send_email
-send_email("test@example.com", "Test Subject", "Hello!")
-```
+- **fastapi**: Admin panel web framework
+- **uvicorn**: ASGI server for admin panel
+- **jinja2**: Template engine for admin panel
+- **pydantic-settings**: Settings management
+- **huey**: Task queue & scheduler
+- **google-api-python-client**: Gmail + Calendar API
+- **langchain-nvidia-ai-endpoints**: NVIDIA LLM
+- **langchain-openai**: OpenAI LLM
+- **langchain-groq**: Groq LLM
+- **langchain-google-genai**: Google Gemini
+- **langchain-openrouter**: OpenRouter LLM
+- **loguru**: Logging
+- **redis**: Task queue backend (Valkey)
+- **requests**: HTTP client for WAHA API
+- **rich**: CLI formatting
+- **WAHA**: WhatsApp HTTP API
 
 ## Adding New Features
 
@@ -435,31 +473,24 @@ send_email("test@example.com", "Test Subject", "Hello!")
 3. Add API key to `.env`
 
 ### To modify summary format:
-- Edit `SYSTEM_PROMPT` in `modules/prompt.py`
+- Edit prompts in `modules/prompt.py`
 
-### To add per-user settings:
-- Add field to users.json
-- Update `get_user_settings()` in tasks.py to read it
+### To add a new huey task:
+1. Add `@huey.task` decorated function in `tasks.py`
+2. Add enqueue function in `admin/services.py`
+3. Add route in `admin/routes/action_routes.py`
 
-## Dependencies
-
-- **huey**: Task queue & scheduler
-- **google-api-python-client**: Gmail API
-- **langchain-nvidia-ai-endpoints**: NVIDIA LLM
-- **langchain-openai**: OpenAI LLM
-- **langchain-groq**: Groq LLM
-- **langchain-google-genai**: Google Gemini
-- **loguru**: Logging
-- **redis**: Task queue backend (Valkey)
-- **requests**: HTTP client for WAHA WhatsApp API calls
-- **WAHA** ([waha.devlike.pro](https://waha.devlike.pro)): WhatsApp HTTP API (separate Docker container) — provides REST API at `http://waha:3000` for sending messages. Dashboard at `:3000/dashboard` for QR-based WhatsApp Web pairing. Setup guide: https://waha.devlike.pro/blog/waha-on-docker/
+### To add a new admin panel page:
+1. Add route in `admin/routes/`
+2. Add template in `admin/templates/`
+3. Add navigation link in `base.html`
 
 ## Environment Setup Priority
 
 When a user is processed:
-1. Per-user settings from users.json (if specified)
-2. Global defaults from .env (if not in users.json)
+1. Per-user settings from Redis/users.json (if specified)
+2. Global defaults from .env (if not in user config)
 
 Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they get:
-- schedule_time: "09:00" (from users.json)
+- schedule_time: "09:00" (from user config)
 - max_email_results: 20 (from .env default)

@@ -12,7 +12,7 @@
                 </h5>
             </div>
             <div class="card-body">
-                <form method="POST" action="/users/{{ user.keyword if user else 'add' }}">
+                <form method="POST" action="/users/{{ user.keyword + '/edit' if user else 'add' }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
                     <div class="row g-3">
@@ -38,25 +38,25 @@
 
                         <div class="col-md-4">
                             <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" name="active" value="true" {{ 'checked' if not user or user.active }}>
+                                <input class="form-check-input toggle-field" type="checkbox" name="active" value="true" {{ 'checked' if not user or user.active }}>
                                 <label class="form-check-label">Active</label>
                             </div>
                         </div>
                         <div class="col-md-4">
                             <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" name="use_email" value="true" {{ 'checked' if not user or user.use_email }}>
+                                <input class="form-check-input toggle-field" type="checkbox" name="use_email" value="true" {{ 'checked' if not user or user.use_email }}>
                                 <label class="form-check-label">Email</label>
                             </div>
                         </div>
                         <div class="col-md-4">
                             <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" name="use_whatsapp" value="true" {{ 'checked' if not user or user.use_whatsapp }}>
+                                <input class="form-check-input toggle-field" type="checkbox" name="use_whatsapp" value="true" {{ 'checked' if not user or user.use_whatsapp }}>
                                 <label class="form-check-label">WhatsApp</label>
                             </div>
                         </div>
                         <div class="col-md-4">
                             <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" name="fetch_calendar" value="true" {{ 'checked' if user and user.fetch_calendar }}>
+                                <input class="form-check-input toggle-field" type="checkbox" name="fetch_calendar" value="true" {{ 'checked' if user and user.fetch_calendar }}>
                                 <label class="form-check-label">Fetch Calendar</label>
                             </div>
                         </div>
@@ -84,11 +84,11 @@
 
                         <div class="col-md-6">
                             <label class="form-label">SMTP Username</label>
-                            <input type="text" name="smtp_host_user" class="form-control" value="{{ user.smtp_host_user if user and user.smtp_host_user else '' }}">
+                            <input type="text" name="smtp_host_user" class="form-control" placeholder="{{ env_smtp_user }}" value="{{ user.smtp_host_user if user and user.smtp_host_user else '' }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">SMTP Password</label>
-                            <input type="password" name="smtp_host_password" class="form-control" value="{{ user.smtp_host_password if user and user.smtp_host_password else '' }}">
+                            <input type="password" name="smtp_host_password" class="form-control" placeholder="{{ env_smtp_password }}" value="{{ user.smtp_host_password if user and user.smtp_host_password else '' }}">
                         </div>
                     </div>
 
@@ -101,4 +101,22 @@
         </div>
     </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelector('form').addEventListener('submit', function() {
+    document.querySelectorAll('.toggle-field').forEach(function(cb) {
+        if (!cb.checked) {
+            var h = document.createElement('input');
+            h.type = 'hidden';
+            h.name = cb.name;
+            h.value = 'false';
+            cb.parentNode.appendChild(h);
+        }
+    });
+});
+</script>
+{% if success_msg %}
+<script>showToast('{{ success_msg }}', 'success');</script>
+{% endif %}
 {% endblock %}

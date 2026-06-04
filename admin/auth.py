@@ -50,7 +50,7 @@ def validate_csrf_token(token: Optional[str]) -> bool:
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    EXEMPT_PATHS = {"/login", "/static", "/favicon.ico"}
+    EXEMPT_PATHS = {"/login", "/static", "/favicon.ico", "/oauth/callback"}
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path

@@ -23,6 +23,6 @@
     </div>
 </div>
 <script>
-setTimeout(function() { window.location.href = "{{ auth_url }}"; }, 1500);
+setTimeout(function() { window.location.href = "{{ auth_url | safe }}"; }, 1500);
 </script>
 {% endblock %}

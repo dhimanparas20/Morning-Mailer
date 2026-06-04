@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import time
-import importlib
 from pathlib import Path
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +9,9 @@ from concurrent.futures import ThreadPoolExecutor
 import redis
 
 from admin.config import get_settings, TOKEN_DIR
+from modules.logger import get_logger
+
+log = get_logger("Admin Services")
 
 settings = get_settings()
 _redis_client: redis.Redis | None = None
@@ -38,7 +40,6 @@ def _import_tasks():
     if "tasks" not in sys.modules:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import tasks
-    importlib.reload(tasks)
     return tasks
 
 
@@ -82,12 +83,14 @@ def create_user(data: dict[str, Any]) -> None:
         if mgr.exists(data["keyword"]):
             raise ValueError(f"User '{data['keyword']}' already exists")
         mgr.add_or_update(data)
+        log.success(f"Created user '{data['keyword']}' ({data.get('name', '')})")
     else:
         users = _list_users_json()
         if any(u.get("keyword") == data["keyword"] for u in users):
             raise ValueError(f"User '{data['keyword']}' already exists")
         users.append(data)
         _save_users_json(users)
+        log.success(f"Created user '{data['keyword']}' ({data.get('name', '')}) [JSON]")
 
 
 def update_user(keyword: str, data: dict[str, Any]) -> None:
@@ -98,6 +101,7 @@ def update_user(keyword: str, data: dict[str, Any]) -> None:
             raise ValueError(f"User '{keyword}' not found")
         merged = {**existing, **{k: v for k, v in data.items() if v is not None}}
         mgr.add_or_update(merged)
+        log.success(f"Updated user '{keyword}'")
     else:
         users = _list_users_json()
         idx = next((i for i, u in enumerate(users) if u.get("keyword") == keyword), None)
@@ -105,31 +109,40 @@ def update_user(keyword: str, data: dict[str, Any]) -> None:
             raise ValueError(f"User '{keyword}' not found")
         users[idx] = {**users[idx], **{k: v for k, v in data.items() if v is not None}}
         _save_users_json(users)
+        log.success(f"Updated user '{keyword}' [JSON]")
 
 
 def delete_user(keyword: str) -> bool:
     mgr = _import_user_mgr()
     if mgr is not None:
-        return mgr.delete(keyword)
+        result = mgr.delete(keyword)
+        if result:
+            log.success(f"Deleted user '{keyword}'")
+        return result
     else:
         users = _list_users_json()
         new_users = [u for u in users if u.get("keyword") != keyword]
         if len(new_users) == len(users):
             return False
         _save_users_json(new_users)
+        log.success(f"Deleted user '{keyword}' [JSON]")
         return True
 
 
 def activate_user(keyword: str) -> bool:
     mgr = _import_user_mgr()
     if mgr is not None:
-        return mgr.activate(keyword)
+        result = mgr.activate(keyword)
+        if result:
+            log.success(f"Activated user '{keyword}'")
+        return result
     else:
         users = _list_users_json()
         for u in users:
             if u.get("keyword") == keyword:
                 u["active"] = True
                 _save_users_json(users)
+                log.success(f"Activated user '{keyword}' [JSON]")
                 return True
         return False
 
@@ -137,13 +150,17 @@ def activate_user(keyword: str) -> bool:
 def deactivate_user(keyword: str) -> bool:
     mgr = _import_user_mgr()
     if mgr is not None:
-        return mgr.deactivate(keyword)
+        result = mgr.deactivate(keyword)
+        if result:
+            log.success(f"Deactivated user '{keyword}'")
+        return result
     else:
         users = _list_users_json()
         for u in users:
             if u.get("keyword") == keyword:
                 u["active"] = False
                 _save_users_json(users)
+                log.success(f"Deactivated user '{keyword}' [JSON]")
                 return True
         return False
 
@@ -151,7 +168,9 @@ def deactivate_user(keyword: str) -> bool:
 def import_users(path: str = "users.json") -> int:
     mgr = _import_user_mgr()
     if mgr is not None:
-        return mgr.import_from_json(path)
+        count = mgr.import_from_json(path)
+        log.success(f"Imported {count} user(s) from {path}")
+        return count
     else:
         users_path = Path(path)
         if not users_path.exists():
@@ -159,27 +178,34 @@ def import_users(path: str = "users.json") -> int:
         with open(users_path) as f:
             users = json.load(f)
         _save_users_json(users)
+        log.success(f"Imported {len(users)} user(s) from {path} [JSON]")
         return len(users)
 
 
 def export_users(path: str = "users.json") -> int:
     mgr = _import_user_mgr()
     if mgr is not None:
-        return mgr.export_to_json(path)
+        count = mgr.export_to_json(path)
+        log.success(f"Exported {count} user(s) to {path}")
+        return count
     else:
         users = _list_users_json()
         with open(path, "w") as f:
             json.dump(users, f, indent=2)
+        log.success(f"Exported {len(users)} user(s) to {path} [JSON]")
         return len(users)
 
 
 def clear_users() -> int:
     mgr = _import_user_mgr()
     if mgr is not None:
-        return mgr.clear_all()
+        count = mgr.clear_all()
+        log.success(f"Cleared {count} user(s) from Redis")
+        return count
     else:
         count = len(_list_users_json())
         _save_users_json([])
+        log.success(f"Cleared {count} user(s) from JSON")
         return count
 
 
@@ -236,6 +262,7 @@ def enqueue_task(task_func, *args, **kwargs) -> dict[str, Any]:
     """Enqueue a huey task and return task ID."""
     task_wrapper = task_func(*args, **kwargs)
     task_id = task_wrapper.id if hasattr(task_wrapper, 'id') else str(task_wrapper)
+    log.info(f"Enqueued task {task_func.__name__} → {task_id}")
     return {"task_id": task_id, "status": "enqueued"}
 
 
@@ -338,20 +365,24 @@ def run_send_calendar_both(keyword: str, days: int = 2) -> dict[str, Any]:
 def run_send_test_email(subject: str, body: str) -> dict[str, Any]:
     """Enqueue test email."""
     tasks = _get_tasks()
+    log.info(f"Test email enqueued: subject='{subject}'")
     return enqueue_task(tasks.huey_test_send_email, subject, body)
 
 
 def run_send_test_whatsapp(mobile: str, message: str) -> dict[str, Any]:
     """Enqueue test WhatsApp message."""
     tasks = _get_tasks()
+    log.info(f"Test WhatsApp enqueued: mobile='{mobile}'")
     return enqueue_task(tasks.huey_test_send_whatsapp, mobile, message)
 
 
 def run_switch_model(provider: str, model_name: str | None = None, temperature: float | None = None) -> str:
     """Switch LLM model (runs in app container, no enqueue needed)."""
     tasks = _get_tasks()
-    tasks.AGENT.hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
-    return f"Model switched to {provider} ({model_name or 'default'})"
+    tasks.get_agent().hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
+    msg = f"Model switched to {provider} ({model_name or 'default'})"
+    log.success(msg)
+    return msg
 
 
 def run_clear_last_run(keyword: str | None = None) -> str:
@@ -365,9 +396,11 @@ def run_clear_last_run(keyword: str | None = None) -> str:
             kw = user.get("keyword", "default")
             r.delete(f"morning_mailer:last_run:{kw}")
             r.delete(f"morning_mailer:last_schedule:{kw}")
+        log.success(f"Cleared last_run for {len(users)} user(s)")
         return f"Cleared last_run for {len(users)} user(s)"
     r.delete(f"morning_mailer:last_run:{keyword}")
     r.delete(f"morning_mailer:last_schedule:{keyword}")
+    log.success(f"Cleared last_run for {keyword}")
     return f"Cleared last_run for {keyword}"
 
 
@@ -408,6 +441,7 @@ def generate_oauth_url(keyword: str) -> str | None:
 
     config_path = CLIENT_SECRET_WEB_PATH if CLIENT_SECRET_WEB_PATH.exists() else CLIENT_SECRET_PATH
     if not config_path.exists():
+        log.warning(f"OAuth URL generation failed: no client_secret file found")
         return None
 
     with open(config_path) as f:
@@ -416,8 +450,10 @@ def generate_oauth_url(keyword: str) -> str | None:
     from modules.web_auth import get_credential_type, get_client_id, get_auth_url
     try:
         auth_url = get_auth_url(client_config, keyword)
+        log.info(f"Generated OAuth URL for '{keyword}'")
         return auth_url
-    except Exception:
+    except Exception as e:
+        log.error(f"OAuth URL generation failed for '{keyword}': {e}")
         return None
 
 
@@ -425,6 +461,7 @@ def exchange_oauth_code(code: str, keyword: str) -> bool:
     from admin.config import CLIENT_SECRET_WEB_PATH, CLIENT_SECRET_PATH
     config_path = CLIENT_SECRET_WEB_PATH if CLIENT_SECRET_WEB_PATH.exists() else CLIENT_SECRET_PATH
     if not config_path.exists():
+        log.warning(f"OAuth exchange failed: no client_secret file found")
         return False
 
     with open(config_path) as f:
@@ -450,6 +487,8 @@ def exchange_oauth_code(code: str, keyword: str) -> bool:
         }
         with open(token_path, "w") as f:
             json.dump(converted_token, f, indent=2)
+        log.success(f"OAuth token saved for '{keyword}'")
         return True
-    except Exception:
+    except Exception as e:
+        log.error(f"OAuth exchange failed for '{keyword}': {e}")
         return False

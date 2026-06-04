@@ -1,3 +1,4 @@
+import os
 import json
 from fastapi import APIRouter, Request, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -5,7 +6,9 @@ from fastapi.templating import Jinja2Templates
 
 from admin.auth import generate_csrf_token, validate_csrf_token, require_auth
 from admin import services
+from modules.logger import get_logger
 
+log = get_logger("Admin Routes")
 router = APIRouter(prefix="/users")
 templates = Jinja2Templates(directory="admin/templates")
 
@@ -57,14 +60,18 @@ async def tokens_json():
 @router.get("/add", response_class=HTMLResponse)
 async def add_user_page(request: Request):
     csrf = generate_csrf_token()
-    return templates.TemplateResponse(request, "user_form.html", {"user": None, "csrf_token": csrf, "mode": "add"})
+    return templates.TemplateResponse(request, "user_form.html", {
+        "user": None, "csrf_token": csrf, "mode": "add",
+        "env_smtp_user": os.getenv("EMAIL_HOST_USER", ""),
+        "env_smtp_password": os.getenv("EMAIL_HOST_PASSWORD", ""),
+    })
 
 
 @router.post("/add")
 async def add_user_submit(
     request: Request,
     name: str = Form(...), email: str = Form(...), keyword: str = Form(...),
-    active: str = Form("true"), use_email: str = Form("true"), use_whatsapp: str = Form("true"),
+    active: str = Form("false"), use_email: str = Form("false"), use_whatsapp: str = Form("false"),
     fetch_calendar: str = Form("false"), max_email_results: str = Form(""), days_threshold: str = Form(""),
     schedule_time: str = Form(""), smtp_host_user: str = Form(""), smtp_host_password: str = Form(""),
     mobile: str = Form(""), csrf_token: str = Form(...),
@@ -92,6 +99,7 @@ async def add_user_submit(
 
     try:
         services.create_user(data)
+        log.success(f"Created user '{keyword}' via form")
     except ValueError as e:
         users = services.list_users()
         token_status = {t["keyword"]: t["has_token"] for t in services.check_tokens()}
@@ -115,12 +123,17 @@ async def get_user_json(keyword: str):
 
 
 @router.get("/{keyword}/edit", response_class=HTMLResponse)
-async def edit_user_page(request: Request, keyword: str):
+async def edit_user_page(request: Request, keyword: str, updated: str = ""):
     user = services.get_user(keyword)
     if not user:
         raise HTTPException(404, "User not found")
     csrf = generate_csrf_token()
-    return templates.TemplateResponse(request, "user_form.html", {"user": user, "csrf_token": csrf, "mode": "edit"})
+    return templates.TemplateResponse(request, "user_form.html", {
+        "user": user, "csrf_token": csrf, "mode": "edit",
+        "env_smtp_user": os.getenv("EMAIL_HOST_USER", ""),
+        "env_smtp_password": os.getenv("EMAIL_HOST_PASSWORD", ""),
+        "success_msg": "User updated successfully" if updated == "1" else None,
+    })
 
 
 @router.post("/{keyword}/edit")
@@ -158,7 +171,8 @@ async def edit_user_submit(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    return {"ok": True, "message": f"User '{keyword}' updated"}
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=f"/users/{keyword}/edit?updated=1", status_code=303)
 
 
 @router.post("/{keyword}/delete")
@@ -166,6 +180,7 @@ async def delete_user_submit(keyword: str, csrf_token: str = Form(...)):
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
     services.delete_user(keyword)
+    log.success(f"Deleted user '{keyword}' via form")
     return {"ok": True, "message": f"User '{keyword}' deleted"}
 
 
@@ -174,6 +189,7 @@ async def activate_user_submit(keyword: str, csrf_token: str = Form(...)):
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
     services.activate_user(keyword)
+    log.success(f"Activated user '{keyword}' via form")
     return {"ok": True, "message": f"User '{keyword}' activated"}
 
 
@@ -182,6 +198,7 @@ async def deactivate_user_submit(keyword: str, csrf_token: str = Form(...)):
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
     services.deactivate_user(keyword)
+    log.success(f"Deactivated user '{keyword}' via form")
     return {"ok": True, "message": f"User '{keyword}' deactivated"}
 
 
@@ -190,6 +207,7 @@ async def import_users_submit(filepath: str = Form("users.json"), csrf_token: st
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
     n = services.import_users(filepath)
+    log.success(f"Imported {n} user(s) from {filepath}")
     return {"ok": True, "message": f"Imported {n} user(s)", "count": n}
 
 
@@ -198,6 +216,7 @@ async def export_users_submit(filepath: str = Form("users.json"), csrf_token: st
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
     n = services.export_users(filepath)
+    log.success(f"Exported {n} user(s) to {filepath}")
     return {"ok": True, "message": f"Exported {n} user(s)", "count": n}
 
 
@@ -206,4 +225,5 @@ async def clear_users_submit(csrf_token: str = Form(...)):
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
     n = services.clear_users()
+    log.success(f"Cleared {n} user(s)")
     return {"ok": True, "message": f"Cleared {n} user(s)", "count": n}

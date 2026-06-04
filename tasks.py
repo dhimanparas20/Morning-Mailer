@@ -56,9 +56,17 @@ WAHA_API_URL = os.getenv("WAHA_API_URL", "http://waha:3000")
 WAHA_API_KEY = os.getenv("WAHA_API_KEY", "")
 WAHA_SESSION = os.getenv("WAHA_SESSION", "default")
 
-# Global LLM agent instance
-AGENT = AgentModule()
-AGENT.init()
+# Global LLM agent instance (lazy-initialized)
+AGENT = None
+
+
+def get_agent():
+    """Lazy-initialize the LLM agent only when actually needed."""
+    global AGENT
+    if AGENT is None:
+        AGENT = AgentModule()
+        AGENT.init()
+    return AGENT
 
 # Redis client for tracking last run
 redis_client = redis.from_url(os.getenv("REDIS_URL"), decode_responses=True)
@@ -290,7 +298,7 @@ def fetch_calendar_events_with_retry(keyword: str, days: int = 2, max_results: i
 def summarize_emails(emails: list[dict[str, Any]], user_name: str = None, calendar_events: list[dict[str, Any]] = None) -> str:
     """Summarize emails using LLM, optionally including calendar events."""
     logger.info(f"Summarizing {len(emails)} emails" + (f" + {len(calendar_events)} calendar events" if calendar_events else "") + "...")
-    summary = AGENT.summarize_emails(emails, user_name=user_name, calendar_events=calendar_events)
+    summary = get_agent().summarize_emails(emails, user_name=user_name, calendar_events=calendar_events)
     logger.success("Email summary generated")
     return summary
 
@@ -467,7 +475,7 @@ def _process_user_both_channels(
 
     if needs_email:
         try:
-            email_summary = AGENT.summarize_emails(result["emails"], user_name=user_name, calendar_events=calendar_events)
+            email_summary = get_agent().summarize_emails(result["emails"], user_name=user_name, calendar_events=calendar_events)
             send_email(
                 to=user_email,
                 subject=f"Daily Email Summary - {user_name}",
@@ -483,7 +491,7 @@ def _process_user_both_channels(
 
     if needs_whatsapp:
         try:
-            whatsapp_summary = AGENT.summarize_emails(
+            whatsapp_summary = get_agent().summarize_emails(
                 result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name, calendar_events=calendar_events
             )
             send_whatsapp(mobile, whatsapp_summary)
@@ -541,7 +549,7 @@ def huey_send_whatsapp_to_user(keyword: str) -> dict[str, Any]:
         if cal_result.get("success"):
             calendar_events = cal_result.get("events", [])
 
-    summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user.get("name", "Unknown"), calendar_events=calendar_events)
+    summary = get_agent().summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user.get("name", "Unknown"), calendar_events=calendar_events)
     send_whatsapp(mobile, summary)
 
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -606,7 +614,7 @@ def huey_force_whatsapp_all() -> dict[str, Any]:
             if cal_result.get("success"):
                 calendar_events = cal_result.get("events", [])
 
-        summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name, calendar_events=calendar_events)
+        summary = get_agent().summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name, calendar_events=calendar_events)
         try:
             send_whatsapp(mobile, summary)
             today_str = datetime.now().strftime("%Y-%m-%d")
@@ -633,7 +641,7 @@ def huey_fetch_calendar_and_send_email(keyword: str, days: int = 2) -> dict[str,
         return {"keyword": keyword, "events": 0, "message": "No events found"}
 
     from modules.prompt import CALENDAR_EMAIL_PROMPT
-    summary = AGENT.summarize_emails(result["events"], prompt=CALENDAR_EMAIL_PROMPT, user_name=user.get("name", "Unknown"))
+    summary = get_agent().summarize_emails(result["events"], prompt=CALENDAR_EMAIL_PROMPT, user_name=user.get("name", "Unknown"))
     send_email(
         to=user.get("email", ""),
         subject=f"Calendar Summary - {user.get('name', 'Unknown')}",
@@ -660,7 +668,7 @@ def huey_fetch_calendar_and_send_whatsapp(keyword: str, days: int = 2) -> dict[s
         return {"keyword": keyword, "events": 0, "message": "No events found"}
 
     from modules.prompt import CALENDAR_WHATSAPP_PROMPT
-    summary = AGENT.summarize_emails(result["events"], prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user.get("name", "Unknown"))
+    summary = get_agent().summarize_emails(result["events"], prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user.get("name", "Unknown"))
     send_whatsapp(mobile, summary)
     return {"keyword": keyword, "events": len(result["events"]), "status": "sent"}
 
@@ -684,7 +692,7 @@ def huey_fetch_calendar_and_send_both(keyword: str, days: int = 2) -> dict[str, 
     from modules.prompt import CALENDAR_EMAIL_PROMPT, CALENDAR_WHATSAPP_PROMPT
 
     try:
-        email_summary = AGENT.summarize_emails(events, prompt=CALENDAR_EMAIL_PROMPT, user_name=user.get("name", "Unknown"))
+        email_summary = get_agent().summarize_emails(events, prompt=CALENDAR_EMAIL_PROMPT, user_name=user.get("name", "Unknown"))
         send_email(
             to=user.get("email", ""),
             subject=f"Calendar Summary - {user.get('name', 'Unknown')}",
@@ -698,7 +706,7 @@ def huey_fetch_calendar_and_send_both(keyword: str, days: int = 2) -> dict[str, 
     mobile = user.get("mobile", "")
     if mobile:
         try:
-            wa_summary = AGENT.summarize_emails(events, prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user.get("name", "Unknown"))
+            wa_summary = get_agent().summarize_emails(events, prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user.get("name", "Unknown"))
             send_whatsapp(mobile, wa_summary)
             wa_status = "sent"
         except Exception as e:
@@ -880,7 +888,7 @@ def daily_whatsapp_summary() -> dict[str, Any]:
         if not result["success"] or not result["emails"]:
             return {"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched, "calendar_events": len(calendar_events)}
 
-        summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name, calendar_events=calendar_events)
+        summary = get_agent().summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name, calendar_events=calendar_events)
 
         try:
             send_whatsapp(mobile, summary)
@@ -920,6 +928,11 @@ def daily_whatsapp_summary() -> dict[str, Any]:
 @huey.periodic_task(crontab(minute=f"*/{SCHEDULE_CHECK_INTERVAL}"))
 def daily_summary() -> dict[str, Any]:
     """Unified daily task: fetch emails once per user, deliver via email and/or WhatsApp."""
+    global _startup_summary_printed
+    if not _startup_summary_printed:
+        _startup_summary_printed = True
+        print_startup_summary()
+
     now = datetime.now()
     current_time_str = now.strftime("%H:%M")
     today_str = now.strftime("%Y-%m-%d")
@@ -1069,5 +1082,5 @@ def print_startup_summary():
     console.print()
 
 
-# Print startup summary
-print_startup_summary()
+# Print startup summary only once (guard against re-imports from admin panel)
+_startup_summary_printed = False

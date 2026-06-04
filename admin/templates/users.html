@@ -87,9 +87,12 @@
                         </td>
                         <td>
                             {% if token_status.get(user.keyword, false) %}
-                            <i class="bi bi-check-circle-fill text-success" title="Token ready"></i>
+                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Ready</span>
                             {% else %}
-                            <a href="/oauth/{{ user.keyword }}" class="text-danger" title="Setup OAuth"><i class="bi bi-x-circle-fill"></i></a>
+                            <div class="btn-group btn-group-sm">
+                                <a href="/oauth/{{ user.keyword }}" class="btn btn-outline-warning" title="Setup OAuth token"><i class="bi bi-key"></i> Setup</a>
+                                <button class="btn btn-outline-secondary copy-oauth-btn" data-keyword="{{ user.keyword }}" title="Copy OAuth URL"><i class="bi bi-clipboard"></i></button>
+                            </div>
                             {% endif %}
                         </td>
                         <td>
@@ -157,6 +160,18 @@ document.getElementById('exportBtn')?.addEventListener('click', async function()
     const fd = new FormData();
     fd.append('csrf_token', '{{ csrf_token }}');
     await postForm('/users/export', fd);
+});
+
+document.querySelectorAll('.copy-oauth-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        var kw = this.dataset.keyword;
+        var url = window.location.origin + '/oauth/' + kw;
+        navigator.clipboard.writeText(url).then(function() {
+            showToast('OAuth URL copied: ' + url, 'success');
+        }).catch(function() {
+            prompt('Copy this OAuth URL:', url);
+        });
+    });
 });
 </script>
 {% endblock %}
