@@ -1,7 +1,5 @@
 FROM python:3.14-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
 ENV TZ=Asia/Kolkata \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -14,6 +12,11 @@ ENV TZ=Asia/Kolkata \
     UV_CONCURRENT_DOWNLOADS=10 \
     PATH="/app/.venv/bin:$PATH" \
     IPYTHONDIR=/app/.ipython
+
+# Install uv directly (more reliable than COPY --from)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/ && \
+    mv /root/.local/bin/uvx /usr/local/bin/
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -28,15 +31,11 @@ WORKDIR /app
 COPY ./pyproject.toml uv.lock ./
 COPY modules/ipython_startup.py /app/modules/ipython_startup.py
 
-
-# Install dependencies with BuildKit cache mount for uv cache
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-# Adding Aliases
 RUN echo 'alias ipython="uv run ipython"' >> /root/.bashrc && \
     echo 'alias cls="clear"' >> /root/.bashrc
 
-# Setup ipython startup
 RUN mkdir -p /app/.ipython/profile_default/startup/ && \
     cp /app/modules/ipython_startup.py /app/.ipython/profile_default/startup/auto_reload.py
