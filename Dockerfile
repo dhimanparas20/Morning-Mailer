@@ -13,11 +13,7 @@ ENV TZ=Asia/Kolkata \
     PATH="/app/.venv/bin:$PATH" \
     IPYTHONDIR=/app/.ipython
 
-# Install uv directly (more reliable than COPY --from)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    mv /root/.local/bin/uv /usr/local/bin/ && \
-    mv /root/.local/bin/uvx /usr/local/bin/
-
+# Install curl first (needed for uv installation)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         tzdata \
@@ -25,6 +21,11 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && ln -sf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime \
     && echo "Asia/Kolkata" > /etc/timezone
+
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/ && \
+    mv /root/.local/bin/uvx /usr/local/bin/
 
 WORKDIR /app
 
