@@ -497,7 +497,233 @@ def _process_user_both_channels(
 
 
 # =============================================================================
-# Huey Tasks
+# Huey Tasks - Individual User Actions (enqueued by admin panel)
+# =============================================================================
+
+@huey.task(retries=2, retry_delay=10)
+def huey_send_email_to_user(keyword: str) -> dict[str, Any]:
+    """Fetch, summarize, and send email summary to a specific user."""
+    users = load_users()
+    user = next((u for u in users if u.get("keyword") == keyword), None)
+    if not user:
+        return {"keyword": keyword, "error": f"User '{keyword}' not found"}
+
+    if not has_valid_token(keyword):
+        return {"keyword": keyword, "error": "OAuth token not found"}
+
+    result = process_user(user, SCHEDULE_TIME)
+    return result
+
+
+@huey.task(retries=2, retry_delay=10)
+def huey_send_whatsapp_to_user(keyword: str) -> dict[str, Any]:
+    """Fetch, summarize, and send WhatsApp summary to a specific user."""
+    users = load_users()
+    user = next((u for u in users if u.get("keyword") == keyword), None)
+    if not user:
+        return {"keyword": keyword, "error": f"User '{keyword}' not found"}
+
+    mobile = user.get("mobile", "")
+    if not mobile:
+        return {"keyword": keyword, "error": "No mobile number configured"}
+
+    if not has_valid_token(keyword):
+        return {"keyword": keyword, "error": "OAuth token not found"}
+
+    max_results, days_threshold = get_user_settings(user)
+    result = fetch_emails_with_retry(keyword, max_results, days_threshold)
+    if not result.get("success") or not result.get("emails"):
+        return {"keyword": keyword, "emails_fetched": 0, "message": "No emails fetched"}
+
+    calendar_events = []
+    if user.get("fetch_calendar", False):
+        cal_result = fetch_calendar_events_with_retry(keyword, days=days_threshold, max_results=20)
+        if cal_result.get("success"):
+            calendar_events = cal_result.get("events", [])
+
+    summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user.get("name", "Unknown"), calendar_events=calendar_events)
+    send_whatsapp(mobile, summary)
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
+    redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user.get("schedule_time", SCHEDULE_TIME))
+
+    return {"keyword": keyword, "emails_fetched": result.get("count", 0), "calendar_events": len(calendar_events), "status": "sent"}
+
+
+@huey.task(retries=1, retry_delay=5)
+def huey_force_email_all() -> dict[str, Any]:
+    """Force email summary for ALL users (ignores schedule)."""
+    users = load_users()
+    results = []
+    for user in users:
+        kw = user.get("keyword", "default")
+        if not user.get("use_email", True):
+            continue
+        redis_client.delete(f"morning_mailer:last_run:{kw}")
+        redis_client.delete(f"morning_mailer:last_schedule:{kw}")
+
+    for user in users:
+        if not user.get("use_email", True):
+            continue
+        result = process_user(user, SCHEDULE_TIME)
+        results.append(result)
+
+    total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
+    return {"processed": len(results), "total_emails_fetched": total_emails, "results": results}
+
+
+@huey.task(retries=1, retry_delay=5)
+def huey_force_whatsapp_all() -> dict[str, Any]:
+    """Force WhatsApp summary for ALL users (ignores schedule)."""
+    users = load_users()
+    wa_users = [u for u in users if u.get("mobile") and u.get("use_whatsapp", True)]
+
+    for user in wa_users:
+        kw = user.get("keyword", "default")
+        redis_client.delete(f"morning_mailer:whatsapp_last_run:{kw}")
+        redis_client.delete(f"morning_mailer:whatsapp_last_schedule:{kw}")
+
+    results = []
+    for user in wa_users:
+        keyword = user.get("keyword", "default")
+        mobile = user.get("mobile", "")
+        user_name = user.get("name", "Unknown")
+
+        if not has_valid_token(keyword):
+            results.append({"keyword": keyword, "error": "No OAuth token"})
+            continue
+
+        max_results, days_threshold = get_user_settings(user)
+        result = fetch_emails_with_retry(keyword, max_results, days_threshold)
+        if not result.get("success") or not result.get("emails"):
+            results.append({"keyword": keyword, "emails_fetched": 0})
+            continue
+
+        calendar_events = []
+        if user.get("fetch_calendar", False):
+            cal_result = fetch_calendar_events_with_retry(keyword, days=days_threshold, max_results=20)
+            if cal_result.get("success"):
+                calendar_events = cal_result.get("events", [])
+
+        summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name, calendar_events=calendar_events)
+        try:
+            send_whatsapp(mobile, summary)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
+            redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user.get("schedule_time", SCHEDULE_TIME))
+            results.append({"keyword": keyword, "emails_fetched": result.get("count", 0), "status": "sent"})
+        except Exception as e:
+            results.append({"keyword": keyword, "error": str(e)})
+
+    total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
+    return {"processed": len(results), "total_emails_fetched": total_emails, "results": results}
+
+
+@huey.task(retries=2, retry_delay=10)
+def huey_fetch_calendar_and_send_email(keyword: str, days: int = 2) -> dict[str, Any]:
+    """Fetch calendar events and send via email to a specific user."""
+    users = load_users()
+    user = next((u for u in users if u.get("keyword") == keyword), None)
+    if not user:
+        return {"keyword": keyword, "error": f"User '{keyword}' not found"}
+
+    result = fetch_calendar_events_with_retry(keyword, days=days, max_results=20)
+    if not result.get("success") or not result.get("events"):
+        return {"keyword": keyword, "events": 0, "message": "No events found"}
+
+    from modules.prompt import CALENDAR_EMAIL_PROMPT
+    summary = AGENT.summarize_emails(result["events"], prompt=CALENDAR_EMAIL_PROMPT, user_name=user.get("name", "Unknown"))
+    send_email(
+        to=user.get("email", ""),
+        subject=f"Calendar Summary - {user.get('name', 'Unknown')}",
+        body=summary, is_html=True,
+        smtp_user=user.get("smtp_host_user"), smtp_password=user.get("smtp_host_password"),
+    )
+    return {"keyword": keyword, "events": len(result["events"]), "status": "sent"}
+
+
+@huey.task(retries=2, retry_delay=10)
+def huey_fetch_calendar_and_send_whatsapp(keyword: str, days: int = 2) -> dict[str, Any]:
+    """Fetch calendar events and send via WhatsApp to a specific user."""
+    users = load_users()
+    user = next((u for u in users if u.get("keyword") == keyword), None)
+    if not user:
+        return {"keyword": keyword, "error": f"User '{keyword}' not found"}
+
+    mobile = user.get("mobile", "")
+    if not mobile:
+        return {"keyword": keyword, "error": "No mobile number configured"}
+
+    result = fetch_calendar_events_with_retry(keyword, days=days, max_results=20)
+    if not result.get("success") or not result.get("events"):
+        return {"keyword": keyword, "events": 0, "message": "No events found"}
+
+    from modules.prompt import CALENDAR_WHATSAPP_PROMPT
+    summary = AGENT.summarize_emails(result["events"], prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user.get("name", "Unknown"))
+    send_whatsapp(mobile, summary)
+    return {"keyword": keyword, "events": len(result["events"]), "status": "sent"}
+
+
+@huey.task(retries=2, retry_delay=10)
+def huey_fetch_calendar_and_send_both(keyword: str, days: int = 2) -> dict[str, Any]:
+    """Fetch calendar events and send via both email and WhatsApp."""
+    users = load_users()
+    user = next((u for u in users if u.get("keyword") == keyword), None)
+    if not user:
+        return {"keyword": keyword, "error": f"User '{keyword}' not found"}
+
+    result = fetch_calendar_events_with_retry(keyword, days=days, max_results=20)
+    if not result.get("success") or not result.get("events"):
+        return {"keyword": keyword, "events": 0, "message": "No events found"}
+
+    events = result["events"]
+    email_status = None
+    wa_status = None
+
+    from modules.prompt import CALENDAR_EMAIL_PROMPT, CALENDAR_WHATSAPP_PROMPT
+
+    try:
+        email_summary = AGENT.summarize_emails(events, prompt=CALENDAR_EMAIL_PROMPT, user_name=user.get("name", "Unknown"))
+        send_email(
+            to=user.get("email", ""),
+            subject=f"Calendar Summary - {user.get('name', 'Unknown')}",
+            body=email_summary, is_html=True,
+            smtp_user=user.get("smtp_host_user"), smtp_password=user.get("smtp_host_password"),
+        )
+        email_status = "sent"
+    except Exception as e:
+        email_status = f"error: {e}"
+
+    mobile = user.get("mobile", "")
+    if mobile:
+        try:
+            wa_summary = AGENT.summarize_emails(events, prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user.get("name", "Unknown"))
+            send_whatsapp(mobile, wa_summary)
+            wa_status = "sent"
+        except Exception as e:
+            wa_status = f"error: {e}"
+
+    return {"keyword": keyword, "events": len(events), "email_status": email_status, "whatsapp_status": wa_status}
+
+
+@huey.task(retries=1, retry_delay=5)
+def huey_test_send_email(subject: str, body: str) -> str:
+    """Send test email via SMTP."""
+    email = os.getenv("MY_EMAIL", "")
+    if not email:
+        raise ValueError("MY_EMAIL not set in .env")
+    return send_email(email, subject, body)
+
+
+@huey.task(retries=1, retry_delay=5)
+def huey_test_send_whatsapp(mobile: str, message: str) -> str:
+    """Send test WhatsApp message."""
+    return send_whatsapp(mobile, message)
+
+
+# =============================================================================
+# Huey Tasks - Scheduled (periodic)
 # =============================================================================
 
 @huey.task(retries=3, retry_delay=5)

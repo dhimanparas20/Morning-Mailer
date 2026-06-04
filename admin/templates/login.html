@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Login - Morning Mailer{% endblock %}
+{% block navbar %}{% endblock %}
+{% block content %}
+<div class="login-wrapper" style="margin:-1.5rem calc(-1 * var(--bs-container-padding));min-height:calc(100vh - 56px);">
+    <div class="login-card p-5" style="width: 100%; max-width: 420px;">
+        <div class="text-center mb-4">
+            <div class="login-icon">
+                <i class="bi bi-envelope-fill"></i>
+            </div>
+            <h2 class="login-title">Morning Mailer</h2>
+            <p class="login-subtitle">Admin Panel</p>
+        </div>
+
+        {% if error %}
+        <div class="alert alert-danger py-2 px-3 mb-3" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error }}
+        </div>
+        {% endif %}
+
+        <form method="POST" action="/login">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+            <div class="mb-3">
+                <label class="form-label">Username</label>
+                <div class="input-group">
+                    <span class="input-group-text" style="background:rgba(139,92,246,0.1);border-color:rgba(139,92,246,0.15);color:#a78bfa;border-radius:12px 0 0 12px;">
+                        <i class="bi bi-person"></i>
+                    </span>
+                    <input type="text" name="username" class="form-control" placeholder="admin" required autofocus
+                           style="border-radius:0 12px 12px 0;">
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label">Password</label>
+                <div class="input-group">
+                    <span class="input-group-text" style="background:rgba(139,92,246,0.1);border-color:rgba(139,92,246,0.15);color:#a78bfa;border-radius:12px 0 0 12px;">
+                        <i class="bi bi-lock"></i>
+                    </span>
+                    <input type="password" name="password" class="form-control" placeholder="Password" required
+                           style="border-radius:0 12px 12px 0;">
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100">
+                <i class="bi bi-box-arrow-in-right me-1"></i> Sign In
+            </button>
+        </form>
+
+        <div class="text-center mt-4">
+            <small class="text-muted">Powered by AI &middot; Secure Access</small>
+        </div>
+    </div>
+</div>
+{% endblock %}

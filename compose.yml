@@ -64,11 +64,11 @@ services:
       start_interval: 2s
     restart: unless-stopped
 
-  morning-mailer:
+  huey:
     build:
       context: .
     image: morning-mailer
-    container_name: morning-mailer-huey
+    container_name: huey
     restart: unless-stopped
     env_file:
       - .env
@@ -98,6 +98,50 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+      start_interval: 2s
+
+  app:
+    build:
+      context: .
+    image: morning-mailer
+    container_name: app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONFAULTHANDLER=1
+      - GAI_CONFIG=prefer-ipv4
+    networks:
+      - app-network
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - '${ADMIN_PORT:-8000}:8000'
+    volumes:
+      - ./admin:/app/admin
+      - ./modules:/app/modules
+      - ./tasks.py:/app/tasks.py
+      - ./gauth:/app/gauth
+      - ./users.json:/app/users.json
+      - ./.env:/app/.env
+    command: uvicorn admin.main:app --host 0.0.0.0 --port 8000 --reload --proxy-headers --workers 1 --use-colors --log-level debug
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: [
+        "CMD-SHELL",
+        "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/login')\""
+      ]
+      interval: 5m
+      timeout: 5s
+      retries: 3
+      start_period: 30s
       start_interval: 2s
 
 #  dozzle-agent:

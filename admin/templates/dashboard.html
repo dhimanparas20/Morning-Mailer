@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Morning Mailer{% endblock %}
+{% block content %}
+
+<!-- Stats Row -->
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="card border-primary h-100">
+            <div class="card-body text-center py-4">
+                <div class="mb-2" style="font-size:2.5rem;color:var(--mm-primary);">
+                    <i class="bi bi-people-fill"></i>
+                </div>
+                <h2 class="fw-bold mb-0">{{ users|length }}</h2>
+                <p class="text-muted mb-0 mt-1">Total Users</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-success h-100">
+            <div class="card-body text-center py-4">
+                <div class="mb-2" style="font-size:2.5rem;color:var(--mm-success);">
+                    <i class="bi bi-check-circle-fill"></i>
+                </div>
+                <h2 class="fw-bold mb-0">{{ users|selectattr('active')|list|length }}</h2>
+                <p class="text-muted mb-0 mt-1">Active Users</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-info h-100">
+            <div class="card-body text-center py-4">
+                <div class="mb-2" style="font-size:2.5rem;color:var(--mm-info);">
+                    <i class="bi bi-key-fill"></i>
+                </div>
+                <h2 class="fw-bold mb-0">{{ tokens|selectattr('has_token')|list|length }}</h2>
+                <p class="text-muted mb-0 mt-1">Tokens Ready</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-warning h-100">
+            <div class="card-body text-center py-4">
+                <div class="mb-2" style="font-size:2.5rem;color:var(--mm-warning);">
+                    <i class="bi bi-hdd-network-fill"></i>
+                </div>
+                <h2 class="fw-bold mb-0">{{ "Connected" if redis_status.connected else "Error" }}</h2>
+                <p class="text-muted mb-0 mt-1">Redis Status</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Actions + Scheduler -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center py-3">
+                <h5 class="mb-0 fw-semibold"><i class="bi bi-lightning-charge-fill" style="color:var(--mm-primary)"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <h6 class="text-muted fw-semibold mb-2" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;">
+                            <i class="bi bi-envelope"></i> Email
+                        </h6>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-primary btn-sm action-btn" data-action="/actions/email/summary">
+                                <i class="bi bi-envelope-arrow-up"></i> Daily Email Summary
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm action-btn" data-action="/actions/email/force">
+                                <i class="bi bi-lightning"></i> Force Email All
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-muted fw-semibold mb-2" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;">
+                            <i class="bi bi-whatsapp"></i> WhatsApp
+                        </h6>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-success btn-sm action-btn" data-action="/actions/whatsapp/summary">
+                                <i class="bi bi-chat-left-text"></i> Daily WhatsApp Summary
+                            </button>
+                            <button class="btn btn-outline-success btn-sm action-btn" data-action="/actions/whatsapp/force">
+                                <i class="bi bi-lightning"></i> Force WhatsApp All
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-muted fw-semibold mb-2" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;">
+                            <i class="bi bi-gear"></i> System
+                        </h6>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-info btn-sm action-btn" data-action="/actions/clear/last-run" data-method="POST">
+                                <i class="bi bi-arrow-counterclockwise"></i> Clear Last Run
+                            </button>
+                            <button class="btn btn-outline-warning btn-sm" data-bs-toggle="modal" data-bs-target="#modelSwitchModal">
+                                <i class="bi bi-cpu"></i> Switch Model
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-muted fw-semibold mb-2" style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;">
+                            <i class="bi bi-bug"></i> Test
+                        </h6>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#testEmailModal">
+                                <i class="bi bi-envelope-check"></i> Test Email
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#testWhatsAppModal">
+                                <i class="bi bi-chat-dots"></i> Test WhatsApp
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header py-3">
+                <h5 class="mb-0 fw-semibold"><i class="bi bi-gear-fill" style="color:var(--mm-primary)"></i> Scheduler</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless mb-0">
+                    <tr><td class="text-muted">Check Interval</td><td class="text-end fw-medium">{{ scheduler.check_interval }} min</td></tr>
+                    <tr><td class="text-muted">Default Time</td><td class="text-end fw-medium">{{ scheduler.schedule_time }}</td></tr>
+                    <tr><td class="text-muted">Max Emails</td><td class="text-end fw-medium">{{ scheduler.max_email_results }}</td></tr>
+                    <tr><td class="text-muted">Days Threshold</td><td class="text-end fw-medium">{{ scheduler.days_threshold }}</td></tr>
+                    <tr><td class="text-muted">Max Workers</td><td class="text-end fw-medium">{{ scheduler.max_workers }}</td></tr>
+                    <tr><td class="text-muted">Env Mode</td><td class="text-end"><span class="badge bg-{{ 'warning' if scheduler.env_mode == 'dev' else 'success' }}">{{ scheduler.env_mode|upper }}</span></td></tr>
+                    <tr><td class="text-muted">Redis Keys</td><td class="text-end fw-medium">{{ redis_status.keys if redis_status.connected else 'N/A' }}</td></tr>
+                    <tr><td class="text-muted">Redis Memory</td><td class="text-end fw-medium">{{ redis_status.memory if redis_status.connected else 'N/A' }}</td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Users Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center py-3">
+        <h5 class="mb-0 fw-semibold"><i class="bi bi-people-fill" style="color:var(--mm-primary)"></i> Users Overview</h5>
+        <a href="/users" class="btn btn-sm btn-primary">View All <i class="bi bi-arrow-right"></i></a>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Keyword</th>
+                        <th>Schedule</th>
+                        <th>Channels</th>
+                        <th>Token</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in users[:5] %}
+                    <tr>
+                        <td class="fw-semibold">{{ user.name }}</td>
+                        <td class="text-muted">{{ user.email }}</td>
+                        <td><code>{{ user.keyword }}</code></td>
+                        <td>{{ user.schedule_time or '-' }}</td>
+                        <td>
+                            {% if user.use_email %}<span class="badge bg-primary">E</span>{% endif %}
+                            {% if user.use_whatsapp %}<span class="badge bg-success">W</span>{% endif %}
+                            {% if user.fetch_calendar %}<span class="badge bg-info">C</span>{% endif %}
+                        </td>
+                        <td>
+                            {% set has_tok = tokens|selectattr('keyword', 'equalto', user.keyword)|first %}
+                            {% if has_tok and has_tok.has_token %}
+                            <i class="bi bi-check-circle-fill text-success"></i>
+                            {% else %}
+                            <a href="/oauth/{{ user.keyword }}" class="text-danger" title="Setup OAuth"><i class="bi bi-x-circle-fill"></i></a>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.active %}
+                            <span class="badge bg-success">Active</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="/users/{{ user.keyword }}/edit" class="btn btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>
+                                <button class="btn btn-outline-primary action-btn-sm" data-action="/actions/email/send/{{ user.keyword }}" data-method="POST" title="Send Email"><i class="bi bi-envelope"></i></button>
+                                {% if user.mobile %}
+                                <button class="btn btn-outline-success action-btn-sm" data-action="/actions/whatsapp/send/{{ user.keyword }}" data-method="POST" title="Send WhatsApp"><i class="bi bi-whatsapp"></i></button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Model Switch Modal -->
+<div class="modal fade" id="modelSwitchModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:rgba(20,20,45,0.95);backdrop-filter:blur(20px);border:1px solid var(--mm-border);border-radius:16px;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-semibold"><i class="bi bi-cpu" style="color:var(--mm-primary)"></i> Switch LLM Model</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="modelSwitchForm">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Provider</label>
+                        <select name="provider" class="form-select" required>
+                            <option value="openai">OpenAI</option>
+                            <option value="openrouter">OpenRouter</option>
+                            <option value="nvidia">NVIDIA</option>
+                            <option value="google">Google Gemini</option>
+                            <option value="groq">Groq</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Model Name <span class="text-muted">(optional)</span></label>
+                        <input type="text" name="model_name" class="form-control" placeholder="Leave empty for default">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Temperature <span class="text-muted">(optional)</span></label>
+                        <input type="number" name="temperature" class="form-control" step="0.1" min="0" max="2" placeholder="0.0 - 2.0">
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Switch Model</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Test Email Modal -->
+<div class="modal fade" id="testEmailModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:rgba(20,20,45,0.95);backdrop-filter:blur(20px);border:1px solid var(--mm-border);border-radius:16px;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-semibold"><i class="bi bi-envelope-check" style="color:var(--mm-primary)"></i> Send Test Email</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="testEmailForm">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Subject</label>
+                        <input type="text" name="subject" class="form-control" required placeholder="Test email subject">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Body</label>
+                        <textarea name="body" class="form-control" rows="4" required placeholder="Email body content..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Send Email</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Test WhatsApp Modal -->
+<div class="modal fade" id="testWhatsAppModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:rgba(20,20,45,0.95);backdrop-filter:blur(20px);border:1px solid var(--mm-border);border-radius:16px;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-semibold"><i class="bi bi-chat-dots" style="color:var(--mm-success)"></i> Send Test WhatsApp</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="testWhatsAppForm">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Mobile Number <span class="text-muted">(with country code)</span></label>
+                        <input type="text" name="mobile" class="form-control" placeholder="919418168860" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Message</label>
+                        <textarea name="message" class="form-control" rows="4" required placeholder="WhatsApp message..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success">Send WhatsApp</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('modelSwitchForm')?.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const fd = new FormData(this);
+    await postForm('/actions/model/switch', fd);
+    bootstrap.Modal.getInstance(this.closest('.modal')).hide();
+});
+
+document.getElementById('testEmailForm')?.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const fd = new FormData(this);
+    await postForm('/actions/test/email', fd);
+    bootstrap.Modal.getInstance(this.closest('.modal')).hide();
+});
+
+document.getElementById('testWhatsAppForm')?.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const fd = new FormData(this);
+    await postForm('/actions/test/whatsapp', fd);
+    bootstrap.Modal.getInstance(this.closest('.modal')).hide();
+});
+</script>
+{% endblock %}

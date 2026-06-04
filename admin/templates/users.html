@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Users - Morning Mailer{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4><i class="bi bi-people"></i> Users <span class="badge bg-primary">{{ users|length }}</span></h4>
+    <div class="d-flex gap-2">
+        <a href="/users/add" class="btn btn-success btn-sm"><i class="bi bi-plus-lg"></i> Add User</a>
+        <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#importModal"><i class="bi bi-upload"></i> Import</button>
+        <button class="btn btn-outline-info btn-sm" id="exportBtn"><i class="bi bi-download"></i> Export</button>
+    </div>
+</div>
+
+{% if error is defined and error %}
+<div class="alert alert-danger alert-dismissible fade show" role="alert">
+    <i class="bi bi-exclamation-triangle"></i> {{ error }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" action="/users" class="row g-2 align-items-end">
+            <div class="col-md-6">
+                <input type="text" name="search" class="form-control" placeholder="Search by name, email, or keyword..." value="{{ search }}">
+            </div>
+            <div class="col-md-3">
+                <select name="sort" class="form-select">
+                    <option value="name" {{ 'selected' if sort == 'name' }}>Sort by Name</option>
+                    <option value="email" {{ 'selected' if sort == 'email' }}>Sort by Email</option>
+                    <option value="keyword" {{ 'selected' if sort == 'keyword' }}>Sort by Keyword</option>
+                    <option value="schedule_time" {{ 'selected' if sort == 'schedule_time' }}>Sort by Schedule</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select name="order" class="form-select">
+                    <option value="asc" {{ 'selected' if order == 'asc' }}>Ascending</option>
+                    <option value="desc" {{ 'selected' if order == 'desc' }}>Descending</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-search"></i></button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Keyword</th>
+                        <th>Schedule</th>
+                        <th>Max</th>
+                        <th>Days</th>
+                        <th>Mobile</th>
+                        <th>Channels</th>
+                        <th>Token</th>
+                        <th style="width:200px">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in users %}
+                    <tr>
+                        <td>
+                            {% if user.active %}
+                            <span class="badge bg-success">Active</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td class="fw-semibold">{{ user.name }}</td>
+                        <td class="text-muted">{{ user.email }}</td>
+                        <td><code>{{ user.keyword }}</code></td>
+                        <td>{{ user.schedule_time or '-' }}</td>
+                        <td>{{ user.max_email_results or '-' }}</td>
+                        <td>{{ user.days_threshold or '-' }}</td>
+                        <td>{{ user.mobile or '-' }}</td>
+                        <td>
+                            {% if user.use_email %}<span class="badge bg-primary">E</span>{% endif %}
+                            {% if user.use_whatsapp %}<span class="badge bg-success">W</span>{% endif %}
+                            {% if user.fetch_calendar %}<span class="badge bg-info">C</span>{% endif %}
+                        </td>
+                        <td>
+                            {% if token_status.get(user.keyword, false) %}
+                            <i class="bi bi-check-circle-fill text-success" title="Token ready"></i>
+                            {% else %}
+                            <a href="/oauth/{{ user.keyword }}" class="text-danger" title="Setup OAuth"><i class="bi bi-x-circle-fill"></i></a>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="/users/{{ user.keyword }}/edit" class="btn btn-outline-secondary" title="Edit"><i class="bi bi-pencil"></i></a>
+                                <button class="btn btn-outline-primary action-btn-sm" data-action="/actions/email/send/{{ user.keyword }}" data-method="POST" title="Send Email Summary"><i class="bi bi-envelope"></i></button>
+                                {% if user.mobile %}
+                                <button class="btn btn-outline-success action-btn-sm" data-action="/actions/whatsapp/send/{{ user.keyword }}" data-method="POST" title="Send WhatsApp Summary"><i class="bi bi-whatsapp"></i></button>
+                                {% endif %}
+                                {% if user.fetch_calendar %}
+                                <button class="btn btn-outline-info action-btn-sm" data-action="/actions/calendar/fetch/{{ user.keyword }}" data-method="POST" title="Fetch Calendar"><i class="bi bi-calendar-event"></i></button>
+                                {% endif %}
+                                <button class="btn btn-outline-danger action-btn-sm" data-action="/users/{{ user.keyword }}/delete" data-method="POST" data-confirm="Delete user '{{ user.keyword }}'?" title="Delete"><i class="bi bi-trash"></i></button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if not users %}
+                    <tr>
+                        <td colspan="11" class="text-center text-muted py-4">No users found</td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Import Modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:rgba(20,20,45,0.95);backdrop-filter:blur(20px);border:1px solid var(--mm-border);border-radius:16px;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-semibold"><i class="bi bi-upload" style="color:var(--mm-primary)"></i> Import Users</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="importForm">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">File Path</label>
+                        <input type="text" name="filepath" class="form-control" value="users.json">
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Import</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('importForm')?.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const fd = new FormData(this);
+    await postForm('/users/import', fd);
+    bootstrap.Modal.getInstance(this.closest('.modal')).hide();
+    location.reload();
+});
+
+document.getElementById('exportBtn')?.addEventListener('click', async function() {
+    const fd = new FormData();
+    fd.append('csrf_token', '{{ csrf_token }}');
+    await postForm('/users/export', fd);
+});
+</script>
+{% endblock %}

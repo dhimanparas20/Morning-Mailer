@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if mode == "edit" else "Add" }} User - Morning Mailer{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-{{ 'pencil' if mode == 'edit' else 'plus-circle' }}"></i>
+                    {{ "Edit" if mode == "edit" else "Add" }} User
+                    {% if user %}<span class="badge bg-primary">{{ user.keyword }}</span>{% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/users/{{ user.keyword if user else 'add' }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Name <span class="text-danger">*</span></label>
+                            <input type="text" name="name" class="form-control" value="{{ user.name if user else '' }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Email <span class="text-danger">*</span></label>
+                            <input type="email" name="email" class="form-control" value="{{ user.email if user else '' }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Keyword <span class="text-danger">*</span></label>
+                            <input type="text" name="keyword" class="form-control" value="{{ user.keyword if user else '' }}" {{ 'readonly' if mode == 'edit' else '' }} required pattern="[a-zA-Z0-9_-]+">
+                            <div class="form-text">Alphanumeric, dash, underscore only. Links to token_&lt;keyword&gt;.json</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Schedule Time</label>
+                            <input type="time" name="schedule_time" class="form-control" value="{{ user.schedule_time if user and user.schedule_time else '' }}">
+                        </div>
+
+                        <div class="col-12"><hr style="border-color:var(--mm-border)"><h6 class="fw-semibold" style="color:var(--mm-primary);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Delivery Channels</h6></div>
+
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="active" value="true" {{ 'checked' if not user or user.active }}>
+                                <label class="form-check-label">Active</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="use_email" value="true" {{ 'checked' if not user or user.use_email }}>
+                                <label class="form-check-label">Email</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="use_whatsapp" value="true" {{ 'checked' if not user or user.use_whatsapp }}>
+                                <label class="form-check-label">WhatsApp</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="fetch_calendar" value="true" {{ 'checked' if user and user.fetch_calendar }}>
+                                <label class="form-check-label">Fetch Calendar</label>
+                            </div>
+                        </div>
+
+                        <div class="col-12"><hr style="border-color:var(--mm-border)"><h6 class="fw-semibold" style="color:var(--mm-primary);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Email Settings</h6></div>
+
+                        <div class="col-md-6">
+                            <label class="form-label">Max Email Results</label>
+                            <input type="number" name="max_email_results" class="form-control" min="1" max="100" value="{{ user.max_email_results if user and user.max_email_results else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Days Threshold</label>
+                            <input type="number" name="days_threshold" class="form-control" min="1" max="30" value="{{ user.days_threshold if user and user.days_threshold else '' }}">
+                        </div>
+
+                        <div class="col-12"><hr style="border-color:var(--mm-border)"><h6 class="fw-semibold" style="color:var(--mm-success);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">WhatsApp</h6></div>
+
+                        <div class="col-md-6">
+                            <label class="form-label">Mobile Number</label>
+                            <input type="text" name="mobile" class="form-control" placeholder="919418168860" value="{{ user.mobile if user and user.mobile else '' }}">
+                            <div class="form-text">Country code + number, no + prefix</div>
+                        </div>
+
+                        <div class="col-12"><hr style="border-color:var(--mm-border)"><h6 class="fw-semibold" style="color:var(--mm-info);font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;">Custom SMTP <span class="text-muted fw-normal">(optional, falls back to .env)</span></h6></div>
+
+                        <div class="col-md-6">
+                            <label class="form-label">SMTP Username</label>
+                            <input type="text" name="smtp_host_user" class="form-control" value="{{ user.smtp_host_user if user and user.smtp_host_user else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">SMTP Password</label>
+                            <input type="password" name="smtp_host_password" class="form-control" value="{{ user.smtp_host_password if user and user.smtp_host_password else '' }}">
+                        </div>
+                    </div>
+
+                    <div class="mt-4 d-flex gap-2">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> {{ "Update" if mode == "edit" else "Create" }}</button>
+                        <a href="/users" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

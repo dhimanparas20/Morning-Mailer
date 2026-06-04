@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}OAuth Result - Morning Mailer{% endblock %}
+{% block navbar %}{% endblock %}
+{% block content %}
+<div class="row justify-content-center" style="margin-top:3rem;">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-body text-center py-5">
+                {% if success %}
+                <div class="mb-3" style="font-size:4rem;color:var(--mm-success);">
+                    <i class="bi bi-check-circle-fill"></i>
+                </div>
+                <h4 class="fw-semibold text-success">OAuth Successful!</h4>
+                <p class="text-muted">Token saved for keyword: <code>{{ keyword }}</code></p>
+                {% else %}
+                <div class="mb-3" style="font-size:4rem;color:var(--mm-danger);">
+                    <i class="bi bi-x-circle-fill"></i>
+                </div>
+                <h4 class="fw-semibold text-danger">OAuth Failed</h4>
+                <p class="text-muted">{{ error or "Unknown error" }}</p>
+                {% endif %}
+                <div class="mt-4">
+                    <a href="/users" class="btn btn-primary">Back to Users</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
