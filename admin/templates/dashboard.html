@@ -137,6 +137,27 @@
     </div>
 </div>
 
+<!-- Job Status Check -->
+<div class="card mb-4">
+    <div class="card-header py-3">
+        <h5 class="mb-0 fw-semibold"><i class="bi bi-search" style="color:var(--mm-primary)"></i> Check Job Status</h5>
+    </div>
+    <div class="card-body">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-8">
+                <input type="text" id="jobIdInput" class="form-control" placeholder="Paste job ID here (e.g. abc12345-...)">
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-primary w-100" onclick="checkJobStatus()"><i class="bi bi-search"></i> Check</button>
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-outline-secondary w-100" onclick="document.getElementById('jobIdInput').value='';document.getElementById('jobStatusResult').innerHTML=''"><i class="bi bi-x-lg"></i> Clear</button>
+            </div>
+        </div>
+        <div id="jobStatusResult" class="mt-3"></div>
+    </div>
+</div>
+
 <!-- Users Table -->
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center py-3">

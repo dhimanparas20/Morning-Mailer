@@ -2,6 +2,7 @@ import time
 import secrets
 from pathlib import Path
 from typing import Optional
+from functools import lru_cache
 
 from fastapi import Request, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -14,9 +15,25 @@ settings = get_settings()
 
 _sessions: dict[str, float] = {}
 _CSRF_TOKENS: dict[str, float] = {}
+_last_cleanup: float = 0.0
+_CLEANUP_INTERVAL: float = 300.0  # run cleanup every 5 minutes
+
+
+def _cleanup_expired() -> None:
+    """Remove expired sessions and CSRF tokens to prevent memory leaks."""
+    global _last_cleanup
+    now = time.time()
+    if now - _last_cleanup < _CLEANUP_INTERVAL:
+        return
+    _last_cleanup = now
+    session_ttl = settings.SESSION_EXPIRE_MINUTES * 60
+    csrf_ttl = 3600
+    _sessions.update({k: v for k, v in _sessions.items() if now - v < session_ttl})
+    _CSRF_TOKENS.update({k: v for k, v in _CSRF_TOKENS.items() if now - v < csrf_ttl})
 
 
 def create_session() -> str:
+    _cleanup_expired()
     token = secrets.token_urlsafe(32)
     _sessions[token] = time.time()
     return token
@@ -37,6 +54,7 @@ def destroy_session(token: str) -> None:
 
 
 def generate_csrf_token() -> str:
+    _cleanup_expired()
     token = secrets.token_urlsafe(32)
     _CSRF_TOKENS[token] = time.time()
     return token

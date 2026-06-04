@@ -41,8 +41,8 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 2. This calls `tasks.huey_send_email_to_user(keyword)` — a `@huey.task` decorated function
 3. Huey enqueues the task to Redis and returns a `TaskWrapper`
 4. Admin panel returns `task_id` to the frontend
-5. Huey container picks up the task and executes it
-6. Frontend polls `/actions/status/{task_id}` for completion
+5. Frontend shows toast with task ID + copy button
+6. Huey container picks up the task and executes asynchronously
 
 ### Why This Separation Matters
 
@@ -105,6 +105,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 - CSRF protection via double-submit cookie
 - `AuthMiddleware` intercepts requests, checks session
 - `EXEMPT_PATHS = {"/login", "/static", "/favicon.ico", "/oauth/callback"}` — callback MUST be exempt or OAuth flow breaks
+- `_cleanup_expired()` — 5-minute TTL pruning for sessions/CSRF, called in `create_session()` and `generate_csrf_token()` to prevent memory leaks
 - Login/logout endpoints
 
 #### 2.4 admin/models.py - Pydantic Models
@@ -114,6 +115,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 #### 2.5 admin/services.py - Business Logic
 - **Purpose**: Thin layer between routes and tasks module
 - **Key Pattern**: All action functions call `tasks.huey_*()` which enqueues to huey
+- **Key Pattern**: `_import_user_mgr()` and `_import_tasks()` are decorated with `@functools.lru_cache(maxsize=1)` — imported once, never re-initialized
 - **Key Functions**:
   - `list_users()`, `get_user()`, `create_user()`, etc. — User CRUD (Redis or users.json fallback)
   - `run_send_email_summary(keyword)` → enqueues `huey_send_email_to_user`
@@ -124,6 +126,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `get_scheduler_status()` — Scheduler config from tasks module
   - `generate_oauth_url(keyword)` — Creates Google OAuth URL (uses `client_secret_web.json` first, falls back to `client_secret.json`)
   - `exchange_oauth_code(code, keyword)` — Exchanges auth code for token
+  - `enqueue_task(task_func, *args, **kwargs)` — Enqueues a huey task. **IMPORTANT**: Huey 3.0's `TaskWrapper` has no `__name__` — access original function via `task_func.func` to get the name (see `admin/services.py:enqueue_task()`)
 - **Note**: Tasks module is imported once at startup (no `importlib.reload`) to avoid re-initializing module-level code in the app container.
 - **Logging**: Uses `modules.logger.get_logger("Admin Services")` for all operations
 
@@ -142,6 +145,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 **User Form Routes**:
 - `GET /users/{keyword}/edit` — renders edit form, passes `success_msg` from `?updated=1` query param
 - `POST /users/{keyword}/edit` — updates user, redirects to `GET /users/{keyword}/edit?updated=1` (303 redirect, NOT JSON)
+- `POST /users/{keyword}/token/revoke` — deletes token file, requires CSRF
 - `POST /users/add` — creates user, returns JSON
 
 **Checkbox Handling in Forms**: HTML checkboxes send nothing when unchecked. The `user_form.html` template uses JavaScript to add hidden inputs with `value="false"` for unchecked checkboxes on form submit. Routes receive `"true"` or `"false"` strings and compare with `== "true"`.
@@ -152,15 +156,15 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 |----------|---------|
 | `base.html` | Base layout (navbar, Bootstrap 5, glassmorphism theme). Has `{% block navbar %}` for hiding on login/oauth pages, `{% block body_class %}` for custom body classes, `{% block scripts %}` for page-specific JS |
 | `login.html` | Login page (no navbar, centered card) |
-| `dashboard.html` | Stats cards, quick actions, scheduler config, users overview |
-| `users.html` | User list with search/sort/filter, action buttons, OAuth setup button + copy button for users without tokens |
+| `dashboard.html` | Stats cards, quick actions, scheduler config, job status checker, users overview |
+| `users.html` | User list with search/sort/filter, action buttons, OAuth setup/revoke + copy buttons |
 | `user_form.html` | Add/edit user form with section headers, .env SMTP fallback placeholders, checkbox JS fix, success toast via `?updated=1` |
 | `oauth_redirect.html` | Redirects to Google OAuth. Uses `{{ auth_url | safe }}` in script tag (NOT `{{ auth_url }}` — Jinja2 escapes `&` to `&amp;` which breaks OAuth URLs) |
 | `oauth_result.html` | Shows OAuth success/failure with link back to users |
 
 #### 2.8 admin/static/ - Static Files
 - `css/style.css` — Purple gradient glassmorphism theme
-- `js/app.js` — Toast notifications (`showToast()`), action handlers (`action-btn-sm`), task status polling (`pollTaskStatus()`, `enqueue_task()`)
+- `js/app.js` — Toast notifications (`showToast()`), task ID + copy toast (`showTaskQueued()`), action handlers (`action-btn-sm`), job status checker (`checkJobStatus()`)
 
 ### 3. modules/fetch_emails.py - Gmail Integration
 - **Purpose**: Handles all Gmail API interactions
@@ -279,7 +283,7 @@ Morning-Mailer/
 │   │   └── oauth_result.html   # OAuth result page
 │   └── static/
 │       ├── css/style.css       # Purple gradient glassmorphism theme
-│       └── js/app.js           # Toast notifications + task polling
+│       └── js/app.js           # Toast notifications + task ID copy + job status checker
 ├── modules/
 │   ├── fetch_emails.py         # Gmail API
 │   ├── fetch_calendar.py       # Google Calendar API
@@ -432,17 +436,8 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 6. Response: {"ok": true, "result": {"task_id": "abc123", "status": "enqueued"}}
            │
            ▼
-7. Huey container picks up task, executes:
-    - Fetch emails
-    - Summarize with LLM
-    - Send email
-    - Return result
-           │
-           ▼
-8. Frontend polls GET /actions/status/abc123
-           │
-           ▼
-9. Response: {"task_id": "abc123", "status": "finished", "result": {...}}
+7. Frontend shows toast with task ID + copy button (NO polling)
+8. User can manually check status via "Check Job Status" on dashboard
 ```
 
 ### OAuth Flow (Admin Panel)
@@ -583,6 +578,72 @@ All admin modules use `modules.logger.get_logger("Module Name")`:
 
 Log levels used: `log.info()` for actions, `log.success()` for completed operations, `log.warning()` for non-critical issues, `log.error()` for failures.
 
+## functools Patterns
+
+The codebase uses `functools` extensively to cache pure helper functions and optimize repeated calls.
+
+### lru_cache Usage
+
+| Module | Function | maxsize | Why Cached |
+|--------|----------|---------|------------|
+| `admin/services.py` | `_import_user_mgr()` | 1 | Import once, never reinitialize |
+| `admin/services.py` | `_import_tasks()` | 1 | Import once, never reinitialize |
+| `modules/redis_users.py` | `_make_user_key()` | 256 | Pure, frequently called |
+| `modules/redis_users.py` | `_serialize()` | 128 | Pure, deterministic |
+| `modules/redis_users.py` | `_deserialize()` | 128 | Pure, deterministic |
+| `modules/fetch_emails.py` | `get_credentials_path()` | 1 | Static path, never changes |
+| `modules/fetch_emails.py` | `get_token_path()` | 256 | Pure, per-keyword |
+| `modules/fetch_emails.py` | `clean_text()` | 512 | Pure string processing |
+| `modules/fetch_emails.py` | `get_header()` | 1024 | Pure dict lookup |
+| `modules/fetch_emails.py` | `decode_body()` | 512 | Pure bytes→string |
+| `modules/fetch_calendar.py` | `get_credentials_path()` | 1 | Static path, never changes |
+| `modules/fetch_calendar.py` | `get_token_path()` | 256 | Pure, per-keyword |
+| `modules/fetch_calendar.py` | `_format_datetime()` | 256 | Pure datetime formatting |
+| `modules/fetch_calendar.py` | `_get_event_datetime()` | 256 | Pure event field extraction |
+| `modules/web_auth.py` | `get_callback_url()` | 1 | Static from env |
+| `modules/web_auth.py` | `get_credentials_path()` | 1 | Static path |
+| `modules/web_auth.py` | `get_web_credentials_path()` | 1 | Static path |
+| `modules/web_auth.py` | `load_client_config()` | 1 | Static JSON file |
+| `modules/logger.py` | `_setup_handler()` | 2 | Idempotent, run once |
+
+### Rules for lru_cache
+
+- **DO cache**: Pure functions (same input → same output, no side effects)
+- **DO NOT cache**: Functions with side effects, external state, or network calls
+- **DO NOT cache**: `get_gmail_service()`, `get_calendar_service()` — these create new API clients and may refresh tokens
+- **DO NOT cache**: `has_valid_token()` — checks filesystem state which can change
+- **DO NOT cache**: `create_llm()` — expensive initialization, not called repeatedly
+- **maxsize=1**: For functions that never change (static paths, singletons)
+- **maxsize=128-1024**: For functions with bounded input domain (user keywords, string processing)
+
+### CSRF Pattern for Action Buttons
+
+Action buttons (email/whatsapp/calendar triggers) do NOT require CSRF tokens. Delete, activate, deactivate, import, and export routes DO require CSRF.
+
+```html
+<!-- Delete button (requires CSRF) -->
+<button class="action-btn-sm" data-action="/users/{{ u.keyword }}/delete"
+        data-method="POST" data-csrf="{{ csrf_token }}"
+        onclick="apiPost(this.dataset.action, this.dataset.method, {}, null, {'X-CSRF-Token': this.dataset.csrf})">
+  Delete
+</button>
+
+<!-- Action button (no CSRF) -->
+<button class="action-btn-sm" data-action="/actions/email/send/{{ u.keyword }}"
+        data-method="POST" onclick="apiPost(this.dataset.action, this.dataset.method)">
+  Email
+</button>
+```
+
+In JavaScript (`app.js`), `apiPost()` accepts an optional `extraHeaders` dict:
+```js
+function apiPost(url, method = "POST", body = null, onSuccess = null, extraHeaders = null) {
+  const headers = { "Content-Type": "application/json" };
+  if (extraHeaders) Object.assign(headers, extraHeaders);
+  // ...
+}
+```
+
 ## Adding New Features
 
 ### To add a new LLM provider:
@@ -642,3 +703,13 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 9. **Docker bind mount stale cache**: If a file was created after container start, `Path.exists()` may return False even though `ls` shows it. Restart or rebuild the container.
 
 10. **SMTP form placeholders**: Pass `.env` values to template as `env_smtp_user`/`env_smtp_password` for placeholder display. User's custom values go in `value=""`, not placeholder.
+
+11. **Huey 3.0 TaskWrapper has no `__name__`**: `@huey.task()` returns a `TaskWrapper`, not a function. `TaskWrapper` has no `__name__` — access the original function via `task_func.func` instead. See `admin/services.py:enqueue_task()`:
+    ```python
+    raw_func = getattr(task_func, 'func', task_func)
+    task_name = getattr(raw_func, '__name__', str(task_func))
+    ```
+
+12. **Session/CSRF memory leak**: In-memory `_sessions` and `_CSRF_TOKENS` dicts grow unbounded. Call `_cleanup_expired()` periodically (done automatically in `create_session()` and `generate_csrf_token()` every 5 minutes).
+
+13. **web_auth.py scope format bug**: Google returns `scope` as a space-separated string. Wrapping it in `[...]` produces `["gmail.readonly calendar.readonly"]` (1 element) instead of `["gmail.readonly", "calendar.readonly"]`. Use `.split()` to fix. Desktop OAuth via `fetch_emails.py` is unaffected (uses `creds.to_json()`).

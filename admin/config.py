@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "morning-mailer-admin-secret-change-in-production"
     SESSION_EXPIRE_MINUTES: int = 480
     REDIS_URL: str = "redis://localhost:6379/0"
-    OAUTH_CALLBACK_URL: str = "http://localhost:47433/callback"
+    OAUTH_CALLBACK_URL: str = "http://localhost:8000/oauth/callback"
     WAHA_API_URL: str = "http://waha:3000"
     WAHA_API_KEY: str = ""
     WAHA_SESSION: str = "default"

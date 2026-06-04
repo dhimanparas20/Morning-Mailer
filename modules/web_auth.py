@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import webbrowser
+from functools import lru_cache
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -34,16 +35,19 @@ CLIENT_SECRET_WEB_PATH = Path("gauth/client_secret_web.json")
 DEFAULT_CALLBACK = "http://localhost:47433/callback"
 
 
+@lru_cache(maxsize=1)
 def get_callback_url() -> str:
     """Get OAuth callback URL from env or default"""
     return os.getenv("OAUTH_CALLBACK_URL", DEFAULT_CALLBACK)
 
 
+@lru_cache(maxsize=1)
 def get_credentials_path() -> Path:
     """Get path to client_secret.json (desktop)"""
     return CLIENT_SECRET_PATH
 
 
+@lru_cache(maxsize=1)
 def get_web_credentials_path() -> Path:
     """Get path to client_secret_web.json (web app)"""
     return CLIENT_SECRET_WEB_PATH
@@ -79,6 +83,7 @@ def get_token_path(keyword: str) -> Path:
     return TOKEN_DIR / f"token_{keyword}.json"
 
 
+@lru_cache(maxsize=1)
 def load_client_config() -> dict:
     """Load client configuration from web credentials, fallback to desktop"""
     # Try web first
@@ -286,7 +291,7 @@ def setup_web_oauth(keyword: str = "default") -> bool:
         "token_uri": "https://oauth2.googleapis.com/token",
         "client_id": client_id,
         "client_secret": client_secret,
-        "scopes": [tokens.get("scope", " ".join(SCOPES))],
+        "scopes": tokens.get("scope", " ".join(SCOPES)).split(),
         "universe_domain": "googleapis.com",
         "account": "",
         "expiry": None,

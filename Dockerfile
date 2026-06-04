@@ -9,7 +9,7 @@ ENV TZ=Asia/Kolkata \
     UV_PYTHON_DOWNLOADS=never \
     UV_HTTP_TIMEOUT=90 \
     UV_NO_PROGRESS=1 \
-    UV_CONCURRENT_DOWNLOADS=10 \
+    UV_CONCURRENT_DOWNLOADS=20 \
     PATH="/app/.venv/bin:$PATH" \
     IPYTHONDIR=/app/.ipython
 

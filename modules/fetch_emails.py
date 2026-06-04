@@ -6,6 +6,7 @@ import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -32,16 +33,19 @@ CREDENTIALS_FILE = BASE_DIR / "client_secret.json"
 logger = get_logger("[fetch_emails]", show_time=False)
 
 
+@lru_cache(maxsize=1)
 def get_credentials_path() -> Path:
     if CREDENTIALS_FILE.exists():
         return CREDENTIALS_FILE
     raise FileNotFoundError(f"Credentials file not found: {CREDENTIALS_FILE}")
 
 
+@lru_cache(maxsize=256)
 def get_token_path(keyword: str) -> Path:
     return TOKENS_DIR / f"token_{keyword}.json"
 
 
+@lru_cache(maxsize=512)
 def clean_text(text: str) -> str:
     if not text:
         return ""
@@ -126,13 +130,14 @@ def get_gmail_service(keyword: str = "default") -> Any:
         raise
 
 
-def get_header(headers: list[dict[str, str]], name: str) -> str:
+def get_header(headers, name: str) -> str:
     for header in headers:
         if header.get("name", "").lower() == name.lower():
             return header.get("value", "")
     return ""
 
 
+@lru_cache(maxsize=512)
 def decode_body(data: str) -> str:
     try:
         decoded_bytes = base64.urlsafe_b64decode(data + "===")

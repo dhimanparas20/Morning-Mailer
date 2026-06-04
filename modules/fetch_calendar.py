@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -23,12 +24,14 @@ CREDENTIALS_FILE = BASE_DIR / "client_secret.json"
 logger = get_logger("[fetch_calendar]", show_time=False)
 
 
+@lru_cache(maxsize=1)
 def get_credentials_path() -> Path:
     if CREDENTIALS_FILE.exists():
         return CREDENTIALS_FILE
     raise FileNotFoundError(f"Credentials file not found: {CREDENTIALS_FILE}")
 
 
+@lru_cache(maxsize=256)
 def get_token_path(keyword: str) -> Path:
     return TOKENS_DIR / f"token_{keyword}.json"
 
@@ -118,6 +121,7 @@ def get_calendar_service(keyword: str = "default") -> Any:
         raise
 
 
+@lru_cache(maxsize=256)
 def _format_datetime(dt_str: str) -> str:
     """Format a datetime string to a readable format."""
     if not dt_str:
@@ -129,6 +133,7 @@ def _format_datetime(dt_str: str) -> str:
         return dt_str
 
 
+@lru_cache(maxsize=256)
 def _get_event_datetime(event: dict[str, Any]) -> datetime | None:
     """Extract datetime from a calendar event (handles all-day and timed events)."""
     start = event.get("start", {})

@@ -40,7 +40,7 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 | `valkey` | Redis | Task queue, user storage, scheduling state | - |
 | `waha` | WhatsApp API | Send WhatsApp messages | - |
 
-The admin panel **never executes heavy work directly** — it only enqueues huey tasks and polls for results.
+The admin panel **never executes heavy work directly** — it only enqueues huey tasks and returns task IDs.
 
 ## Features
 
@@ -213,7 +213,7 @@ Morning-Mailer/
 │   │   └── oauth_result.html   # OAuth success/failure result
 │   └── static/
 │       ├── css/style.css       # Purple gradient glassmorphism theme
-│       └── js/app.js           # Toast notifications + task polling
+│       └── js/app.js           # Toast notifications + task ID copy + job status checker
 ├── modules/
 │   ├── fetch_emails.py         # Gmail API (keyword-based tokens)
 │   ├── fetch_calendar.py       # Google Calendar API (shares tokens with Gmail)
@@ -283,17 +283,18 @@ docker compose logs -f
 Access at http://localhost:8000 (default: admin/changeme)
 
 ### Features
-- **Dashboard**: Stats cards, quick actions, scheduler config, users overview
-- **Users**: Full CRUD with search/sort/filter, per-user action buttons, OAuth Setup + Copy buttons
-- **Actions**: Trigger email/whatsapp summaries, force all, test send
+- **Dashboard**: Stats cards, quick actions, scheduler config, job status checker, users overview
+- **Users**: Full CRUD with search/sort/filter, per-user action buttons, OAuth Setup + Revoke + Copy buttons
+- **Actions**: Trigger email/whatsapp summaries, force all, test send — returns task ID with copy button
+- **Job Status**: Paste a task ID to check its status (pending/finished/error)
 - **OAuth**: Setup OAuth tokens through the browser (click "Setup" → authorize → done)
 - **System**: Redis status, model switching, last-run clearing
 
 ### Architecture
 The admin panel enqueues huey tasks via Redis. The huey container picks them up and executes. This means:
-- Admin panel responds immediately with a task ID
+- Admin panel responds immediately with a task ID + copy button
 - Actual work happens asynchronously in the huey container
-- Frontend polls `/actions/status/{task_id}` for completion
+- Users can check status manually via "Check Job Status" on dashboard
 - Edit user form redirects back to form with success toast (not JSON)
 
 ## Configuration
@@ -390,6 +391,10 @@ docker compose restart huey
 # Or via CLI:
 uv run python -m modules.fetch_emails setup <keyword>
 ```
+
+### OAuth scope error (403 insufficient permissions)
+- Token was generated without proper scopes — re-authorize via admin panel Setup button
+- Or delete the token and regenerate: `rm gauth/tokens/token_<keyword>.json` then Setup again
 
 ### OAuth callback fails
 - Ensure `OAUTH_CALLBACK_URL` in `.env` matches the port your admin panel is on

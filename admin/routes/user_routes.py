@@ -202,6 +202,17 @@ async def deactivate_user_submit(keyword: str, csrf_token: str = Form(...)):
     return {"ok": True, "message": f"User '{keyword}' deactivated"}
 
 
+@router.post("/{keyword}/token/revoke")
+async def revoke_token_submit(keyword: str, csrf_token: str = Form(...)):
+    if not validate_csrf_token(csrf_token):
+        raise HTTPException(403, "Invalid CSRF token")
+    revoked = services.revoke_token(keyword)
+    if revoked:
+        log.success(f"Revoked token for '{keyword}'")
+        return {"ok": True, "message": f"Token revoked for '{keyword}'"}
+    raise HTTPException(404, "Token not found")
+
+
 @router.post("/import")
 async def import_users_submit(filepath: str = Form("users.json"), csrf_token: str = Form(...)):
     if not validate_csrf_token(csrf_token):

@@ -78,6 +78,10 @@ services:
       - app-network
     extra_hosts:
       - host.docker.internal:host-gateway
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     volumes:
       - ./modules:/app/modules
       - ./modules/ipython_startup.py:/app/.ipython/profile_default/startup/auto_reload.py
@@ -133,6 +137,8 @@ services:
     depends_on:
       valkey:
         condition: service_healthy
+      huey:
+        condition: service_healthy
     healthcheck:
       test: [
         "CMD-SHELL",
@@ -141,7 +147,7 @@ services:
       interval: 5m
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 20s
       start_interval: 2s
 
 #  dozzle-agent:

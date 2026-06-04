@@ -87,7 +87,10 @@
                         </td>
                         <td>
                             {% if token_status.get(user.keyword, false) %}
-                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Ready</span>
+                            <div class="btn-group btn-group-sm">
+                                <span class="badge bg-success align-self-center"><i class="bi bi-check-circle"></i> Ready</span>
+                                <button class="btn btn-outline-danger action-btn-sm" data-action="/users/{{ user.keyword }}/token/revoke" data-method="POST" data-csrf="{{ csrf_token }}" data-confirm="Revoke token for '{{ user.keyword }}'? User will need to re-authorize." title="Revoke token"><i class="bi bi-key-fill"></i> Revoke</button>
+                            </div>
                             {% else %}
                             <div class="btn-group btn-group-sm">
                                 <a href="/oauth/{{ user.keyword }}" class="btn btn-outline-warning" title="Setup OAuth token"><i class="bi bi-key"></i> Setup</a>
@@ -105,7 +108,7 @@
                                 {% if user.fetch_calendar %}
                                 <button class="btn btn-outline-info action-btn-sm" data-action="/actions/calendar/fetch/{{ user.keyword }}" data-method="POST" title="Fetch Calendar"><i class="bi bi-calendar-event"></i></button>
                                 {% endif %}
-                                <button class="btn btn-outline-danger action-btn-sm" data-action="/users/{{ user.keyword }}/delete" data-method="POST" data-confirm="Delete user '{{ user.keyword }}'?" title="Delete"><i class="bi bi-trash"></i></button>
+                                <button class="btn btn-outline-danger action-btn-sm" data-action="/users/{{ user.keyword }}/delete" data-method="POST" data-csrf="{{ csrf_token }}" data-confirm="Delete user '{{ user.keyword }}'?" title="Delete"><i class="bi bi-trash"></i></button>
                             </div>
                         </td>
                     </tr>
@@ -130,6 +133,7 @@
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <form id="importForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="modal-body">
                     <div class="mb-3">
                         <label class="form-label">File Path</label>

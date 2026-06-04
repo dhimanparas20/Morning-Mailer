@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +29,7 @@ def get_redis() -> redis.Redis | None:
     return _redis_client
 
 
+@lru_cache(maxsize=1)
 def _import_user_mgr():
     from modules.redis_users import RedisUserManager
     r = get_redis()
@@ -36,6 +38,7 @@ def _import_user_mgr():
     return RedisUserManager(r=r)
 
 
+@lru_cache(maxsize=1)
 def _import_tasks():
     if "tasks" not in sys.modules:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -250,6 +253,13 @@ def has_valid_token(keyword: str) -> bool:
     return token_path.exists()
 
 
+def revoke_token(keyword: str) -> bool:
+    token_path = TOKEN_DIR / f"token_{keyword}.json"
+    if token_path.exists():
+        token_path.unlink()
+        return True
+    return False
+
 # ── Actions ────────────────────────────────────────────────────────────────
 # All actions enqueue huey tasks — the huey container does the actual work.
 
@@ -260,9 +270,11 @@ def _get_tasks():
 
 def enqueue_task(task_func, *args, **kwargs) -> dict[str, Any]:
     """Enqueue a huey task and return task ID."""
+    raw_func = getattr(task_func, 'func', task_func)
+    task_name = getattr(raw_func, '__name__', str(task_func))
     task_wrapper = task_func(*args, **kwargs)
     task_id = task_wrapper.id if hasattr(task_wrapper, 'id') else str(task_wrapper)
-    log.info(f"Enqueued task {task_func.__name__} → {task_id}")
+    log.info(f"Enqueued task {task_name} → {task_id}")
     return {"task_id": task_id, "status": "enqueued"}
 
 
@@ -480,7 +492,7 @@ def exchange_oauth_code(code: str, keyword: str) -> bool:
             "token_uri": "https://oauth2.googleapis.com/token",
             "client_id": client_id,
             "client_secret": client_secret,
-            "scopes": [tokens.get("scope", "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly")],
+            "scopes": tokens.get("scope", "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly").split(),
             "universe_domain": "googleapis.com",
             "account": "",
             "expiry": None,

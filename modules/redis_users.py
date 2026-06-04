@@ -8,6 +8,7 @@ so we can enumerate users without SCAN.
 import json
 import logging
 import os
+from functools import lru_cache
 from typing import Any, Sequence
 
 import redis
@@ -40,10 +41,12 @@ INT_FIELDS  = {"max_email_results", "days_threshold"}
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+@lru_cache(maxsize=256)
 def _make_user_key(keyword: str) -> str:
     return f"{USER_KEY_PREFIX}:{keyword}"
 
 
+@lru_cache(maxsize=128)
 def _serialize(value: Any) -> str:
     """Convert a Python value to its Redis-safe string representation."""
     if isinstance(value, bool):
@@ -53,6 +56,7 @@ def _serialize(value: Any) -> str:
     return str(value) if value else ""
 
 
+@lru_cache(maxsize=128)
 def _deserialize(field: str, raw: str | None) -> Any:
     """Convert a raw Redis string back to the correct Python type."""
     if raw is None:
