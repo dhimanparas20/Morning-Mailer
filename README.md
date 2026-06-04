@@ -20,6 +20,7 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 - **Smart Fallbacks**: Global .env defaults when per-user settings not specified
 - **WhatsApp Integration**: Send summaries via WhatsApp using WAHA
 - **Per-Channel Toggle**: Enable/disable email (`use_email`) and WhatsApp (`use_whatsapp`) per user
+- **Calendar Integration**: Include Google Calendar events in summaries (`fetch_calendar` per-user toggle)
 
 ## Quick Start
 
@@ -112,6 +113,7 @@ Create `users.json` with your users:
     "active": true,
     "use_email": true,
     "use_whatsapp": true,
+    "fetch_calendar": true,
     "max_email_results": 20,
     "days_threshold": 2,
     "schedule_time": "08:00",
@@ -126,6 +128,7 @@ Create `users.json` with your users:
     "active": true,
     "use_email": true,
     "use_whatsapp": false,
+    "fetch_calendar": true,
     "max_email_results": 10,
     "schedule_time": "09:00"
   }
@@ -139,6 +142,7 @@ Create `users.json` with your users:
 - `active`: true/false (default: true)
 - `use_email`: Enable email delivery (default: true)
 - `use_whatsapp`: Enable WhatsApp delivery (default: true)
+- `fetch_calendar`: Include Google Calendar events (default: false)
 - `max_email_results`: Max emails to fetch (optional, uses .env default)
 - `days_threshold`: Days to look back (optional, uses .env default)
 - `schedule_time`: When to run HH:MM (optional, uses .env SCHEDULE_TIME)
@@ -222,6 +226,7 @@ Morning-Mailer/
 ├── tasks.py                    # Main scheduler & task logic
 ├── modules/
 │   ├── fetch_emails.py        # Gmail API (keyword-based)
+│   ├── fetch_calendar.py      # Google Calendar API (keyword-based)
 │   ├── agent_mod.py           # LLM wrapper
 │   ├── agent_utils.py         # LLM factory
 │   ├── prompt.py              # Simple HTML template
@@ -316,6 +321,7 @@ docker compose exec huey uv run ipython
 | `%send_test_email <subject> <body>` | Send test email (uses MY_EMAIL from .env) |
 | `%send_test_whatsapp <mobile> <message>` | Send test WhatsApp message |
 | `%summarize_whatsapp <keyword>` | Fetch & summarize in WhatsApp format (no send) |
+| `%fetch_calendar <keyword> [days]` | Fetch calendar events for a user |
 | `%run_summarize <keyword>` | Fetch & summarize in HTML email format (no send) |
 | `%run_fetch <keyword>` | Fetch emails directly, print count (no Huey) |
 | `%redis_status` | Check Redis connection health + user count |

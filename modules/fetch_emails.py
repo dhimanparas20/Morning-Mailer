@@ -19,7 +19,10 @@ from modules.logger import get_logger
 from modules.generics import format_timestamp
 
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+]
 
 BASE_DIR = Path("gauth")
 TOKENS_DIR = BASE_DIR / "tokens"

@@ -44,8 +44,8 @@ class AgentModule:
             model_temperature=temp,
         )
 
-    def summarize_emails(self, emails: list[dict[str, Any]], prompt: Optional[str] = None, user_name: Optional[str] = None) -> str:
-        """Summarize emails using LLM"""
+    def summarize_emails(self, emails: list[dict[str, Any]], prompt: Optional[str] = None, user_name: Optional[str] = None, calendar_events: Optional[list[dict[str, Any]]] = None) -> str:
+        """Summarize emails (and optionally calendar events) using LLM"""
         if self.llm is None:
             self.init()
 
@@ -54,9 +54,14 @@ class AgentModule:
             prompt = SYSTEM_PROMPT
         if user_name:
             prompt = prompt.replace("{USER_NAME}", user_name)
+
         user_message = f"{prompt}\n\nHere are the emails to summarize:\n\n{email_json}"
 
-        logger.info(f"Summarizing {len(emails)} emails...")
+        if calendar_events:
+            cal_json = str(calendar_events)
+            user_message += f"\n\nHere are the upcoming calendar events to include in the summary:\n\n{cal_json}"
+
+        logger.info(f"Summarizing {len(emails)} emails" + (f" + {len(calendar_events)} calendar events" if calendar_events else "") + "...")
 
         response = self.llm.invoke([HumanMessage(content=user_message)])
         return response.content

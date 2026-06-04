@@ -36,6 +36,7 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 6. **DEV/PROD Mode**: DEV = run multiple times/day (verbose DEBUG logs), PROD = run once/day (quiet SUCCESS-level logs)
 7. **WhatsApp Integration**: Send summaries via WhatsApp using WAHA API
 8. **Per-Channel Toggles**: `use_email` and `use_whatsapp` per-user booleans
+9. **Calendar Integration**: Optional Google Calendar event fetching (`fetch_calendar` per-user toggle)
 
 ## Core Components
 
@@ -86,7 +87,19 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
 
 ### 2.1 modules/web_auth.py - Web OAuth Setup
 
-### 2.2 modules/redis_users.py - Redis User Storage
+### 2.2 modules/fetch_calendar.py - Google Calendar Integration
+- **Purpose**: Handles all Google Calendar API interactions
+- **Key Functions**:
+  - `get_calendar_service(keyword)`: Initializes Calendar API client with OAuth (per keyword)
+  - `fetch_events(keyword, calendar_id, time_min, time_max, max_results, ...)`: Full-featured event fetcher
+  - `fetch_upcoming_events(keyword, days, max_results)`: Convenience function for next N days
+  - `has_valid_token(keyword)`: Checks if OAuth token exists
+- **Token Sharing**: Uses the same `token_<keyword>.json` as Gmail
+- **OAuth Scope**: Requires `calendar.readonly` (auto-added to SCOPES)
+- **Event Format**: Returns clean dicts with summary, start/end, location, attendees, etc.
+- **CLI**: `python -m modules.fetch_calendar check|fetch [keyword] [days]`
+
+### 2.3 modules/redis_users.py - Redis User Storage
 - **Purpose**: Store and manage users as Redis hashes (alternative to users.json)
 - **Key Pattern**: `USERS_CONFIG:<keyword>` — each user is a Redis hash, keywords tracked in `USERS_CONFIG:keywords` SET
 - **Key Classes**:
@@ -143,6 +156,7 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
   - `%summarize_whatsapp <keyword>`: Fetch & summarize in WhatsApp format
   - `%run_summarize <keyword>`: Fetch & summarize in HTML email format
   - `%run_fetch <keyword>`: Fetch emails directly (no Huey)
+  - `%fetch_calendar <keyword> [days]`: Fetch calendar events for a user
   - `%redis_status`: Check Redis connection
   - `%redis_users_list`: List all users in Redis
   - `%redis_users_show <keyword>`: Show one user's details
@@ -182,7 +196,9 @@ Morning Mailer is an AI-powered **multi-user** email summarization system that a
     ├── fetch_emails_with_retry(keyword, user_max_results, user_days_threshold)
     │    - Uses user's max_email_results (or global default)
     │    - Uses user's days_threshold (or global default)
-    ├── summarize_emails(emails)
+    ├── IF user.fetch_calendar:
+    │    └── fetch_calendar_events_with_retry(keyword, days_threshold)
+    ├── summarize_emails(emails, calendar_events=calendar_events)
     ├── send_email(to=user_email, smtp_host=user_smtp)
     └── set_user_last_run_date(keyword, today)
            │
@@ -197,6 +213,7 @@ Morning-Mailer/
 ├── tasks.py                    # Main scheduler (per-user scheduling)
 ├── modules/
 │   ├── fetch_emails.py         # Gmail API (keyword-based tokens)
+│   ├── fetch_calendar.py       # Google Calendar API (keyword-based tokens)
 │   ├── agent_mod.py            # LLM wrapper
 │   ├── agent_utils.py          # LLM factory
 │   ├── prompt.py               # Simple HTML template
@@ -232,6 +249,7 @@ Morning-Mailer/
     "active": true,
     "use_email": true,
     "use_whatsapp": true,
+    "fetch_calendar": true,
     "max_email_results": 20,      // optional, falls back to .env
     "days_threshold": 2,            // optional, falls back to .env
     "schedule_time": "08:00",       // optional, falls back to .env SCHEDULE_TIME
@@ -251,6 +269,7 @@ Morning-Mailer/
 | `active` | No | true | If false, user is skipped |
 | `use_email` | No | true | Enable/disable email delivery |
 | `use_whatsapp` | No | true | Enable/disable WhatsApp delivery |
+| `fetch_calendar` | No | false | Include Google Calendar events in summary |
 | `max_email_results` | No | .env MAX_EMAIL_RESULTS | Max emails to fetch |
 | `days_threshold` | No | .env DAYS_THRESHOLD | Days to look back |
 | `schedule_time` | No | .env SCHEDULE_TIME | When to run (HH:MM) |
@@ -370,6 +389,7 @@ In IPython (`docker compose exec huey uv run ipython`):
 | `%send_test_email` | `%send_test_email <subject> <body>` | Send test email |
 | `%send_test_whatsapp` | `%send_test_whatsapp <mobile> <message>` | Send test WhatsApp message |
 | `%summarize_whatsapp` | `%summarize_whatsapp <keyword>` | Fetch & summarize in WhatsApp format |
+| `%fetch_calendar` | `%fetch_calendar <keyword> [days]` | Fetch calendar events for a user |
 | `%redis_status` | `%redis_status` | Check Redis connection |
 | `%clear_last_run` | `%redis_users_clear yes` | Delete ALL users from Redis |
 | `%redis_users_fields` | Show all available user fields |

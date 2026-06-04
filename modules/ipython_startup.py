@@ -429,6 +429,191 @@ def send_whatsapp_summary(line):
 
 
 @register_line_magic
+def fetch_calendar(line):
+    """Fetch and display calendar events in shell. Usage: %fetch_calendar <keyword> [days]"""
+    parts = line.strip().split()
+    if not parts:
+        print("Usage: %fetch_calendar <keyword> [days]")
+        print("Example: %fetch_calendar dhimanparas20 2")
+        return
+    keyword = parts[0]
+    days = int(parts[1]) if len(parts) > 1 else 2
+    from modules.fetch_calendar import fetch_upcoming_events
+    result = fetch_upcoming_events(keyword=keyword, days=days)
+    if result.get("success"):
+        events = result.get("events", [])
+        if not events:
+            print(f"[yellow]No events found for '{keyword}' in the next {days} day(s)[/yellow]")
+            return
+        print(f"[green]Found {len(events)} event(s) for '{keyword}' (next {days} day(s)):[/green]")
+        for ev in events:
+            all_day = " (all-day)" if ev["is_all_day"] else ""
+            loc = f" @ {ev['location']}" if ev.get("location") else ""
+            link = f"\n    🔗 {ev['html_link']}" if ev.get("html_link") else ""
+            print(f"  [{ev['start']} → {ev['end']}]{all_day} {ev['summary']}{loc}{link}")
+    else:
+        print(f"[red]Error fetching calendar: {result.get('error', 'Unknown error')}[/red]")
+
+
+@register_line_magic
+def send_calendar_email(line):
+    """Fetch calendar events and send HTML summary via email. Usage: %send_calendar_email <keyword> [days]"""
+    parts = line.strip().split()
+    if not parts:
+        print("Usage: %send_calendar_email <keyword> [days]")
+        print("Example: %send_calendar_email paras_premagic 2")
+        return
+    keyword = parts[0]
+    days = int(parts[1]) if len(parts) > 1 else 2
+
+    from tasks import load_users, send_email
+    from modules.fetch_calendar import fetch_upcoming_events
+    from modules.prompt import CALENDAR_EMAIL_PROMPT
+
+    users = load_users()
+    user = next((u for u in users if u.get("keyword") == keyword), None)
+    if not user:
+        print(f"[red]User '{keyword}' not found[/red]")
+        return
+
+    user_name = user.get("name", "Unknown")
+    user_email = user.get("email", "")
+    smtp_user = user.get("smtp_host_user")
+    smtp_password = user.get("smtp_host_password")
+
+    print(f"[cyan]Fetching calendar events for {user_name} ({keyword})...[/cyan]")
+    result = fetch_upcoming_events(keyword=keyword, days=days)
+    if not result.get("success") or not result.get("events"):
+        print("[yellow]No calendar events found[/yellow]")
+        return
+
+    print(f"[cyan]Summarizing {len(result['events'])} event(s)...[/cyan]")
+    from tasks import AGENT
+    summary = AGENT.summarize_emails(result["events"], prompt=CALENDAR_EMAIL_PROMPT, user_name=user_name)
+
+    send_email(
+        to=user_email,
+        subject=f"Calendar Summary - {user_name}",
+        body=summary,
+        is_html=True,
+        smtp_user=smtp_user,
+        smtp_password=smtp_password,
+    )
+    print(f"[green]✓ Calendar summary sent to {user_email} ({len(result['events'])} events)[/green]")
+
+
+@register_line_magic
+def send_calendar_whatsapp(line):
+    """Fetch calendar events and send WhatsApp summary. Usage: %send_calendar_whatsapp <keyword> [days]"""
+    parts = line.strip().split()
+    if not parts:
+        print("Usage: %send_calendar_whatsapp <keyword> [days]")
+        print("Example: %send_calendar_whatsapp paras_premagic 2")
+        return
+    keyword = parts[0]
+    days = int(parts[1]) if len(parts) > 1 else 2
+
+    from tasks import load_users, send_whatsapp
+    from modules.fetch_calendar import fetch_upcoming_events
+    from modules.prompt import CALENDAR_WHATSAPP_PROMPT
+
+    users = load_users()
+    user = next((u for u in users if u.get("keyword") == keyword), None)
+    if not user:
+        print(f"[red]User '{keyword}' not found[/red]")
+        return
+
+    mobile = user.get("mobile", "")
+    if not mobile:
+        print(f"[red]User {user.get('name')} has no mobile number configured[/red]")
+        return
+
+    user_name = user.get("name", "Unknown")
+
+    print(f"[cyan]Fetching calendar events for {user_name} ({keyword})...[/cyan]")
+    result = fetch_upcoming_events(keyword=keyword, days=days)
+    if not result.get("success") or not result.get("events"):
+        print("[yellow]No calendar events found[/yellow]")
+        return
+
+    print(f"[cyan]Summarizing {len(result['events'])} event(s)...[/cyan]")
+    from tasks import AGENT
+    summary = AGENT.summarize_emails(result["events"], prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user_name)
+
+    try:
+        send_whatsapp(mobile, summary)
+        print(f"[green]✓ Calendar summary sent to {mobile} ({len(result['events'])} events)[/green]")
+    except Exception as e:
+        print(f"[red]✗ WhatsApp send failed: {e}[/red]")
+
+
+@register_line_magic
+def send_calendar_both(line):
+    """Fetch calendar events and send via BOTH email and WhatsApp. Usage: %send_calendar_both <keyword> [days]"""
+    parts = line.strip().split()
+    if not parts:
+        print("Usage: %send_calendar_both <keyword> [days]")
+        print("Example: %send_calendar_both paras_premagic 2")
+        return
+    keyword = parts[0]
+    days = int(parts[1]) if len(parts) > 1 else 2
+
+    from tasks import load_users, send_email, send_whatsapp
+    from modules.fetch_calendar import fetch_upcoming_events
+    from modules.prompt import CALENDAR_EMAIL_PROMPT, CALENDAR_WHATSAPP_PROMPT
+
+    users = load_users()
+    user = next((u for u in users if u.get("keyword") == keyword), None)
+    if not user:
+        print(f"[red]User '{keyword}' not found[/red]")
+        return
+
+    user_name = user.get("name", "Unknown")
+    user_email = user.get("email", "")
+    mobile = user.get("mobile", "")
+    smtp_user = user.get("smtp_host_user")
+    smtp_password = user.get("smtp_host_password")
+
+    print(f"[cyan]Fetching calendar events for {user_name} ({keyword})...[/cyan]")
+    result = fetch_upcoming_events(keyword=keyword, days=days)
+    if not result.get("success") or not result.get("events"):
+        print("[yellow]No calendar events found[/yellow]")
+        return
+
+    events = result["events"]
+    print(f"[cyan]Summarizing {len(events)} event(s)...[/cyan]")
+    from tasks import AGENT
+
+    # Send email
+    try:
+        email_summary = AGENT.summarize_emails(events, prompt=CALENDAR_EMAIL_PROMPT, user_name=user_name)
+        send_email(
+            to=user_email,
+            subject=f"Calendar Summary - {user_name}",
+            body=email_summary,
+            is_html=True,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+        )
+        print(f"[green]✓ Email sent to {user_email}[/green]")
+    except Exception as e:
+        print(f"[red]✗ Email send failed: {e}[/red]")
+
+    # Send WhatsApp
+    if mobile:
+        try:
+            wa_summary = AGENT.summarize_emails(events, prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user_name)
+            send_whatsapp(mobile, wa_summary)
+            print(f"[green]✓ WhatsApp sent to {mobile}[/green]")
+        except Exception as e:
+            print(f"[red]✗ WhatsApp send failed: {e}[/red]")
+    else:
+        print("[yellow]⚠ No mobile number, skipping WhatsApp[/yellow]")
+
+    print(f"[green]✓ Calendar summary completed ({len(events)} events)[/green]")
+
+
+@register_line_magic
 def redis_users_list(line):
     """List all users stored in Redis."""
     from modules.redis_users import RedisUserManager
@@ -449,6 +634,7 @@ def redis_users_list(line):
     table.add_column("Days", style="blue", justify="center")
     table.add_column("Mobile", style="yellow")
     table.add_column("Ch", style="green", justify="center")
+    table.add_column("Cal", style="cyan", justify="center")
     table.add_column("Rdy", style="red", justify="center")
 
     for u in users:
@@ -456,11 +642,13 @@ def redis_users_list(line):
         use_w = u.get("use_whatsapp", True)
         ch = ("E" if use_e else "-") + ("W" if use_w else "-")
         rdy = "✓" if u.get("active", True) else "✗"
+        fetch_cal = u.get("fetch_calendar", False)
+        cal = "✓" if fetch_cal else "-"
         table.add_row(
             u.get("name", "?"), u.get("email", ""), u.get("keyword", ""),
             u.get("schedule_time", "-"), str(u.get("max_email_results", "-")),
             str(u.get("days_threshold", "-")), u.get("mobile", "-"),
-            ch, rdy,
+            ch, cal, rdy,
         )
     console = Console()
     console.print(table)
@@ -479,7 +667,7 @@ def redis_users_show(line):
     if not user:
         print(f"[red]User '{keyword}' not found in Redis[/red]")
         return
-    for f in ["name", "email", "keyword", "active", "use_email", "use_whatsapp",
+    for f in ["name", "email", "keyword", "active", "use_email", "use_whatsapp", "fetch_calendar",
               "max_email_results", "days_threshold", "schedule_time",
               "smtp_host_user", "smtp_host_password", "mobile"]:
         val = user.get(f, "-")
@@ -653,6 +841,7 @@ def redis_users_fields(line):
         "active": "Enable/disable this user",
         "use_email": "Enable email delivery",
         "use_whatsapp": "Enable WhatsApp delivery",
+        "fetch_calendar": "Include Google Calendar events in summary",
         "max_email_results": "Max emails to fetch",
         "days_threshold": "Days to look back",
         "schedule_time": "Run time (HH:MM, 24h)",
@@ -682,7 +871,7 @@ def redis_users_fields(line):
     console.print(table)
 
 
-print("[green]✓[/green] Morning Mailer magic functions loaded")
+    print("[green]✓[/green] Morning Mailer magic functions loaded")
 
 console = Console()
 
@@ -693,6 +882,10 @@ magics = [
     ("%force_whatsapp_summary", "", "Force WhatsApp summary for ALL users (ignores schedule)"),
     ("%send_email_summary", "<keyword|email>", "Send email summary to a specific user"),
     ("%send_whatsapp_summary", "<keyword|mobile>", "Send WhatsApp summary to a specific user"),
+    ("%fetch_calendar", "<keyword> [days]", "Fetch & display calendar events in shell"),
+    ("%send_calendar_email", "<keyword> [days]", "Fetch calendar & send HTML summary via email"),
+    ("%send_calendar_whatsapp", "<keyword> [days]", "Fetch calendar & send WhatsApp summary"),
+    ("%send_calendar_both", "<keyword> [days]", "Fetch calendar & send via both email + WhatsApp"),
     ("%send_test_email", "<subject> <body>", "Send a test email"),
     ("%send_test_whatsapp", "<mobile> <message>", "Send a test WhatsApp message"),
     ("%summarize_whatsapp", "<keyword>", "Fetch & summarize in WhatsApp format"),

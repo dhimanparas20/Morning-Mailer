@@ -28,6 +28,7 @@ from rich import box
 
 from modules import get_logger, format_timestamp
 from modules.fetch_emails import fetch_emails, load_users as load_email_users, get_token_path
+from modules.fetch_calendar import fetch_upcoming_events, has_valid_token as has_valid_calendar_token
 from modules.agent_mod import AgentModule
 from modules.prompt import WHATSAPP_SYSTEM_PROMPT
 
@@ -254,10 +255,42 @@ def fetch_emails_with_retry(keyword: str, max_results: int = None, days_threshol
     return {"success": False, "error": last_error, "count": 0, "emails": []}
 
 
-def summarize_emails(emails: list[dict[str, Any]], user_name: str = None) -> str:
-    """Summarize emails using LLM."""
-    logger.info(f"Summarizing {len(emails)} emails...")
-    summary = AGENT.summarize_emails(emails, user_name=user_name)
+def fetch_calendar_events_with_retry(keyword: str, days: int = 2, max_results: int = 20) -> dict[str, Any]:
+    """Fetch calendar events for a specific user with retry logic.
+
+    Returns events for today and tomorrow (or N days ahead).
+    """
+    last_error = None
+
+    for attempt in range(RETRY_COUNT):
+        try:
+            logger.info(f"[{keyword}] Calendar attempt {attempt + 1}/{RETRY_COUNT}")
+
+            result = fetch_upcoming_events(keyword=keyword, days=days, max_results=max_results)
+
+            if result["success"]:
+                logger.success(f"[{keyword}] Fetched {result['count']} calendar events")
+                return result
+            else:
+                last_error = result.get("error")
+                logger.warning(f"[{keyword}] Calendar attempt {attempt + 1} failed: {last_error}")
+
+        except Exception as e:
+            last_error = str(e)
+            logger.error(f"[{keyword}] Calendar attempt {attempt + 1} exception: {e}")
+
+        if attempt < RETRY_COUNT - 1:
+            logger.info(f"[{keyword}] Retrying calendar in {RETRY_DELAY}s...")
+            time.sleep(RETRY_DELAY)
+
+    logger.error(f"[{keyword}] All {RETRY_COUNT} calendar attempts failed. Last error: {last_error}")
+    return {"success": False, "error": last_error, "count": 0, "events": []}
+
+
+def summarize_emails(emails: list[dict[str, Any]], user_name: str = None, calendar_events: list[dict[str, Any]] = None) -> str:
+    """Summarize emails using LLM, optionally including calendar events."""
+    logger.info(f"Summarizing {len(emails)} emails" + (f" + {len(calendar_events)} calendar events" if calendar_events else "") + "...")
+    summary = AGENT.summarize_emails(emails, user_name=user_name, calendar_events=calendar_events)
     logger.success("Email summary generated")
     return summary
 
@@ -334,7 +367,7 @@ def has_valid_token(keyword: str) -> bool:
 
 
 def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, Any]:
-    """Process a single user: fetch, summarize, and send email."""
+    """Process a single user: fetch emails + calendar, summarize, and send email."""
     keyword = user.get("keyword", "default")
     user_name = user.get("name", "Unknown")
     user_email = user.get("email", "")
@@ -360,8 +393,16 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
     result = fetch_emails_with_retry(keyword, max_results, days_threshold)
     emails_fetched = result.get("count", 0) if result.get("success") else 0
 
+    # Fetch calendar events if enabled for this user
+    calendar_events = []
+    if user.get("fetch_calendar", False):
+        cal_result = fetch_calendar_events_with_retry(keyword, days=days_threshold, max_results=20)
+        if cal_result.get("success"):
+            calendar_events = cal_result.get("events", [])
+            logger.info(f"[{keyword}] Fetched {len(calendar_events)} calendar events")
+
     if result["success"] and result["emails"]:
-        summary = summarize_emails(result["emails"], user_name=user_name)
+        summary = summarize_emails(result["emails"], user_name=user_name, calendar_events=calendar_events)
 
         logger.info(f"[{keyword}] Email summary generated, sending to {user_email}")
 
@@ -384,6 +425,7 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
         "email": user_email,
         "emails_fetched": emails_fetched,
         "emails_summarized": emails_fetched,
+        "calendar_events": len(calendar_events),
     }
 
 
@@ -394,7 +436,7 @@ def _process_user_both_channels(
     today_str: str,
     global_schedule_time: str,
 ) -> dict[str, Any]:
-    """Process a user for both email and WhatsApp channels. Fetches emails once."""
+    """Process a user for both email and WhatsApp channels. Fetches emails + calendar once."""
     keyword = user.get("keyword", "default")
     user_name = user.get("name", "Unknown")
     user_email = user.get("email", "")
@@ -410,14 +452,22 @@ def _process_user_both_channels(
     result = fetch_emails_with_retry(keyword, max_results, days_threshold)
     emails_fetched = result.get("count", 0) if result.get("success") else 0
 
+    # Fetch calendar events if enabled for this user
+    calendar_events = []
+    if user.get("fetch_calendar", False):
+        cal_result = fetch_calendar_events_with_retry(keyword, days=days_threshold, max_results=20)
+        if cal_result.get("success"):
+            calendar_events = cal_result.get("events", [])
+            logger.info(f"[{keyword}] Fetched {len(calendar_events)} calendar events")
+
     if not result["success"] or not result["emails"]:
-        return {"keyword": keyword, "name": user_name, "emails_fetched": 0}
+        return {"keyword": keyword, "name": user_name, "emails_fetched": 0, "calendar_events": len(calendar_events)}
 
     user_schedule = user.get("schedule_time", global_schedule_time)
 
     if needs_email:
         try:
-            email_summary = AGENT.summarize_emails(result["emails"], user_name=user_name)
+            email_summary = AGENT.summarize_emails(result["emails"], user_name=user_name, calendar_events=calendar_events)
             send_email(
                 to=user_email,
                 subject=f"Daily Email Summary - {user_name}",
@@ -434,7 +484,7 @@ def _process_user_both_channels(
     if needs_whatsapp:
         try:
             whatsapp_summary = AGENT.summarize_emails(
-                result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name
+                result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name, calendar_events=calendar_events
             )
             send_whatsapp(mobile, whatsapp_summary)
             redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
@@ -443,7 +493,7 @@ def _process_user_both_channels(
         except Exception as e:
             logger.error(f"[{keyword}] WhatsApp send failed: {e}")
 
-    return {"keyword": keyword, "name": user_name, "emails_fetched": emails_fetched}
+    return {"keyword": keyword, "name": user_name, "emails_fetched": emails_fetched, "calendar_events": len(calendar_events)}
 
 
 # =============================================================================
@@ -594,10 +644,17 @@ def daily_whatsapp_summary() -> dict[str, Any]:
         result = fetch_emails_with_retry(keyword, max_results, days_threshold)
         emails_fetched = result.get("count", 0) if result.get("success") else 0
 
-        if not result["success"] or not result["emails"]:
-            return {"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched}
+        # Fetch calendar events if enabled for this user
+        calendar_events = []
+        if user.get("fetch_calendar", False):
+            cal_result = fetch_calendar_events_with_retry(keyword, days=days_threshold, max_results=20)
+            if cal_result.get("success"):
+                calendar_events = cal_result.get("events", [])
 
-        summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
+        if not result["success"] or not result["emails"]:
+            return {"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched, "calendar_events": len(calendar_events)}
+
+        summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name, calendar_events=calendar_events)
 
         try:
             send_whatsapp(mobile, summary)
@@ -605,7 +662,7 @@ def daily_whatsapp_summary() -> dict[str, Any]:
             redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
             redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user_schedule)
             logger.success(f"[{keyword}] WhatsApp summary sent to {mobile}")
-            return {"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched}
+            return {"keyword": keyword, "name": user_name, "mobile": mobile, "emails_fetched": emails_fetched, "calendar_events": len(calendar_events)}
         except Exception as e:
             logger.error(f"[{keyword}] WhatsApp send failed: {e}")
             return {"keyword": keyword, "name": user_name, "mobile": mobile, "error": str(e)}
@@ -751,6 +808,7 @@ def print_startup_summary():
     users_table.add_column("Days", style="blue", justify="center", width=4)
     users_table.add_column("Mobile", style="yellow", no_wrap=True, min_width=12)
     users_table.add_column("Ch", style="green", justify="center", width=3)
+    users_table.add_column("Cal", style="cyan", justify="center", width=3)
     users_table.add_column("Rdy", style="red", justify="center", width=3)
 
     for idx, user in enumerate(users, 1):
@@ -764,6 +822,8 @@ def print_startup_summary():
         use_email = user.get("use_email", True)
         use_whatsapp = user.get("use_whatsapp", True)
         channels = ("E" if use_email else "-") + ("W" if use_whatsapp else "-")
+        fetch_cal = user.get("fetch_calendar", False)
+        calendar = "✓" if fetch_cal else "-"
         mobile = user.get("mobile", "-")
 
         users_table.add_row(
@@ -775,6 +835,7 @@ def print_startup_summary():
             str(days),
             mobile,
             channels,
+            calendar,
             ready
         )
 

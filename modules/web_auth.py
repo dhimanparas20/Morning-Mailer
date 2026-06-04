@@ -23,7 +23,10 @@ from loguru import logger
 
 load_dotenv()
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+]
 TOKEN_DIR = Path("gauth/tokens")
 CLIENT_SECRET_PATH = Path("gauth/client_secret.json")
 CLIENT_SECRET_WEB_PATH = Path("gauth/client_secret_web.json")
@@ -44,6 +47,30 @@ def get_credentials_path() -> Path:
 def get_web_credentials_path() -> Path:
     """Get path to client_secret_web.json (web app)"""
     return CLIENT_SECRET_WEB_PATH
+
+
+def get_credential_type(client_config: dict) -> str:
+    """Detect whether client config is 'web' or 'installed' (desktop)."""
+    if "web" in client_config:
+        return "web"
+    if "installed" in client_config:
+        return "installed"
+    raise ValueError("Unrecognized client secret format — expected 'web' or 'installed' key")
+
+
+def get_client_id(client_config: dict) -> str:
+    cred_type = get_credential_type(client_config)
+    return client_config[cred_type]["client_id"]
+
+
+def get_client_secret(client_config: dict) -> str:
+    cred_type = get_credential_type(client_config)
+    return client_config[cred_type]["client_secret"]
+
+
+def get_redirect_uris(client_config: dict) -> list[str]:
+    cred_type = get_credential_type(client_config)
+    return client_config[cred_type].get("redirect_uris", [])
 
 
 def get_token_path(keyword: str) -> Path:
@@ -74,7 +101,7 @@ def load_client_config() -> dict:
 
 def get_auth_url(client_config: dict, state: str) -> str:
     """Generate OAuth URL"""
-    client_id = client_config["web"]["client_id"]
+    client_id = get_client_id(client_config)
     redirect_uri = get_callback_url()
     
     auth_params = {
@@ -164,8 +191,8 @@ def exchange_code_for_token(code: str, client_config: dict) -> dict:
     
     token_url = "https://oauth2.googleapis.com/token"
     
-    client_id = client_config["web"]["client_id"]
-    client_secret = client_config["web"]["client_secret"]
+    client_id = get_client_id(client_config)
+    client_secret = get_client_secret(client_config)
     redirect_uri = get_callback_url()
     
     data = {
@@ -193,7 +220,11 @@ def setup_web_oauth(keyword: str = "default") -> bool:
         return False
     
     # Get redirect URI
-    redirect_uri = client_config["web"]["redirect_uris"][0]
+    redirect_uris = get_redirect_uris(client_config)
+    if not redirect_uris:
+        logger.error("No redirect_uris found in client config")
+        return False
+    redirect_uri = redirect_uris[0]
     logger.info(f"Redirect URI: {redirect_uri}")
     
     # Generate auth URL
@@ -246,8 +277,8 @@ def setup_web_oauth(keyword: str = "default") -> bool:
     token_path = get_token_path(keyword)
     
     # Convert to Google OAuth token format with required fields
-    client_id = client_config["web"]["client_id"]
-    client_secret = client_config["web"]["client_secret"]
+    client_id = get_client_id(client_config)
+    client_secret = get_client_secret(client_config)
     
     converted_token = {
         "token": tokens.get("access_token"),
@@ -255,7 +286,7 @@ def setup_web_oauth(keyword: str = "default") -> bool:
         "token_uri": "https://oauth2.googleapis.com/token",
         "client_id": client_id,
         "client_secret": client_secret,
-        "scopes": [tokens.get("scope", "https://www.googleapis.com/auth/gmail.readonly")],
+        "scopes": [tokens.get("scope", " ".join(SCOPES))],
         "universe_domain": "googleapis.com",
         "account": "",
         "expiry": None,

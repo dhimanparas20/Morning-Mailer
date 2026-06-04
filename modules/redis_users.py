@@ -24,7 +24,7 @@ KEYWORDS_KEY    = f"{USER_KEY_PREFIX}:keywords"
 # Every field a user dict can contain (matches users.json schema).
 ALL_FIELDS = [
     "name", "email", "keyword",
-    "active", "use_email", "use_whatsapp",
+    "active", "use_email", "use_whatsapp", "fetch_calendar",
     "max_email_results", "days_threshold",
     "schedule_time",
     "smtp_host_user", "smtp_host_password",
@@ -33,7 +33,7 @@ ALL_FIELDS = [
 
 # Fields that need type coercion when reading back from Redis (Redis stores
 # everything as strings).
-BOOL_FIELDS = {"active", "use_email", "use_whatsapp"}
+BOOL_FIELDS = {"active", "use_email", "use_whatsapp", "fetch_calendar"}
 INT_FIELDS  = {"max_email_results", "days_threshold"}
 
 

@@ -55,6 +55,7 @@ def _render_users_table(users: list[dict[str, Any]], title: str) -> None:
     table.add_column("Days", style="blue", justify="center", width=4)
     table.add_column("Mobile", style="yellow", no_wrap=True, min_width=12)
     table.add_column("Ch", style="green", justify="center", width=3)
+    table.add_column("Cal", style="cyan", justify="center", width=3)
     table.add_column("Rdy", style="red", justify="center", width=3)
 
     for u in users:
@@ -63,6 +64,8 @@ def _render_users_table(users: list[dict[str, Any]], title: str) -> None:
         channels = ("E" if use_email else "-") + ("W" if use_wa else "-")
         active = u.get("active", True)
         ready = "✓" if active else "✗"
+        fetch_cal = u.get("fetch_calendar", False)
+        cal = "✓" if fetch_cal else "-"
 
         table.add_row(
             u.get("name", "?"),
@@ -73,6 +76,7 @@ def _render_users_table(users: list[dict[str, Any]], title: str) -> None:
             str(u.get("days_threshold", "-")),
             u.get("mobile", "-"),
             channels,
+            cal,
             ready,
         )
 
@@ -86,7 +90,7 @@ def _render_user_detail(user: dict[str, Any]) -> None:
     table.add_column("Field", style="cyan")
     table.add_column("Value", style="green")
 
-    for field in ["name", "email", "keyword", "active", "use_email", "use_whatsapp",
+    for field in ["name", "email", "keyword", "active", "use_email", "use_whatsapp", "fetch_calendar",
                    "max_email_results", "days_threshold", "schedule_time",
                    "smtp_host_user", "smtp_host_password", "mobile"]:
         val = user.get(field, "-")
@@ -132,6 +136,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--active", default="true", choices=["true", "false"])
     p_add.add_argument("--use-email", default="true", choices=["true", "false"], dest="use_email")
     p_add.add_argument("--use-whatsapp", default="true", choices=["true", "false"], dest="use_whatsapp")
+    p_add.add_argument("--fetch-calendar", default="true", choices=["true", "false"], dest="fetch_calendar")
     p_add.add_argument("--max-emails", type=int, dest="max_email_results")
     p_add.add_argument("--days", type=int, dest="days_threshold")
     p_add.add_argument("--schedule-time", dest="schedule_time")
@@ -148,6 +153,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ("--active", "active", "true / false"),
         ("--use-email", "use_email", "Enable email delivery (true / false)"),
         ("--use-whatsapp", "use_whatsapp", "Enable WhatsApp delivery (true / false)"),
+        ("--fetch-calendar", "fetch_calendar", "Include calendar events in summary (true / false)"),
         ("--max-emails", "max_email_results", "Max emails to fetch"),
         ("--days", "days_threshold", "Days to look back"),
         ("--schedule-time", "schedule_time", "HH:MM run time"),
@@ -207,6 +213,7 @@ def _collect_user(args: argparse.Namespace, existing: dict[str, Any] | None = No
         ("active", "active"),
         ("use_email", "use_email"),
         ("use_whatsapp", "use_whatsapp"),
+        ("fetch_calendar", "fetch_calendar"),
     ):
         val = getattr(args, arg_name, None)
         if val is not None:
@@ -329,6 +336,7 @@ def cmd_fields() -> None:
         "active":             "Enable/disable this user",
         "use_email":          "Enable email delivery",
         "use_whatsapp":       "Enable WhatsApp delivery",
+        "fetch_calendar":     "Include Google Calendar events in summary",
         "max_email_results":  "Max emails to fetch",
         "days_threshold":     "Days to look back",
         "schedule_time":      "Run time (HH:MM, 24h)",
