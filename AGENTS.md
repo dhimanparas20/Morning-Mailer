@@ -44,6 +44,14 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 5. Huey container picks up the task and executes it
 6. Frontend polls `/actions/status/{task_id}` for completion
 
+### Why This Separation Matters
+
+- The `app` container imports `tasks.py` but NEVER calls heavy functions directly
+- The LLM agent (`AGENT`) is `None` at module level — lazily initialized only by `get_agent()`
+- `print_startup_summary()` only runs once inside `daily_summary()` (guarded by `_startup_summary_printed` flag)
+- `admin/services.py` imports `tasks` once at startup — NO `importlib.reload()`
+- This means starting the admin panel does NOT load the LLM, does NOT print startup tables, does NOT waste memory
+
 ## Core Components
 
 ### 1. tasks.py - Huey Tasks & Scheduling
@@ -90,11 +98,13 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 #### 2.2 admin/config.py - Settings
 - Pydantic Settings loaded from `.env`
 - Key settings: `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `SECRET_KEY`, `REDIS_URL`
+- Also defines `CLIENT_SECRET_WEB_PATH` and `CLIENT_SECRET_PATH` for OAuth
 
 #### 2.3 admin/auth.py - Authentication
 - Session-based auth (not JWT)
 - CSRF protection via double-submit cookie
 - `AuthMiddleware` intercepts requests, checks session
+- `EXEMPT_PATHS = {"/login", "/static", "/favicon.ico", "/oauth/callback"}` — callback MUST be exempt or OAuth flow breaks
 - Login/logout endpoints
 
 #### 2.4 admin/models.py - Pydantic Models
@@ -112,9 +122,10 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `check_task_status(task_id)` — polls huey for task result
   - `get_redis_status()` — Redis connection info
   - `get_scheduler_status()` — Scheduler config from tasks module
-  - `generate_oauth_url(keyword)` — Creates Google OAuth URL
+  - `generate_oauth_url(keyword)` — Creates Google OAuth URL (uses `client_secret_web.json` first, falls back to `client_secret.json`)
   - `exchange_oauth_code(code, keyword)` — Exchanges auth code for token
 - **Note**: Tasks module is imported once at startup (no `importlib.reload`) to avoid re-initializing module-level code in the app container.
+- **Logging**: Uses `modules.logger.get_logger("Admin Services")` for all operations
 
 #### 2.6 admin/routes/ - API Routes
 
@@ -124,23 +135,32 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 | `user_routes` | `/users` | User CRUD, search/sort, import/export |
 | `action_routes` | `/actions` | Trigger email/whatsapp/calendar actions, test send, model switch |
 | `oauth_routes` | `/oauth` | OAuth start + callback |
-| `system_routes` | `/` | Redis status, scheduler status, tokens status |
+| `system_routes` | `/system` | Redis status, scheduler status, tokens status |
+
+**Important Route Ordering in oauth_routes.py**: `/callback` MUST be defined BEFORE `/{keyword}` otherwise FastAPI matches `callback` as a keyword. The `/callback` path is the fixed OAuth callback URL used by Google redirect.
+
+**User Form Routes**:
+- `GET /users/{keyword}/edit` — renders edit form, passes `success_msg` from `?updated=1` query param
+- `POST /users/{keyword}/edit` — updates user, redirects to `GET /users/{keyword}/edit?updated=1` (303 redirect, NOT JSON)
+- `POST /users/add` — creates user, returns JSON
+
+**Checkbox Handling in Forms**: HTML checkboxes send nothing when unchecked. The `user_form.html` template uses JavaScript to add hidden inputs with `value="false"` for unchecked checkboxes on form submit. Routes receive `"true"` or `"false"` strings and compare with `== "true"`.
 
 #### 2.7 admin/templates/ - Jinja2 Templates
 
 | Template | Purpose |
 |----------|---------|
-| `base.html` | Base layout (navbar, Bootstrap 5, glassmorphism theme) |
+| `base.html` | Base layout (navbar, Bootstrap 5, glassmorphism theme). Has `{% block navbar %}` for hiding on login/oauth pages, `{% block body_class %}` for custom body classes, `{% block scripts %}` for page-specific JS |
 | `login.html` | Login page (no navbar, centered card) |
 | `dashboard.html` | Stats cards, quick actions, scheduler config, users overview |
-| `users.html` | User list with search/sort/filter, action buttons |
-| `user_form.html` | Add/edit user form |
-| `oauth_redirect.html` | Redirects to Google OAuth |
-| `oauth_result.html` | Shows OAuth success/failure |
+| `users.html` | User list with search/sort/filter, action buttons, OAuth setup button + copy button for users without tokens |
+| `user_form.html` | Add/edit user form with section headers, .env SMTP fallback placeholders, checkbox JS fix, success toast via `?updated=1` |
+| `oauth_redirect.html` | Redirects to Google OAuth. Uses `{{ auth_url | safe }}` in script tag (NOT `{{ auth_url }}` — Jinja2 escapes `&` to `&amp;` which breaks OAuth URLs) |
+| `oauth_result.html` | Shows OAuth success/failure with link back to users |
 
 #### 2.8 admin/static/ - Static Files
 - `css/style.css` — Purple gradient glassmorphism theme
-- `js/app.js` — Toast notifications, action handlers, task status polling
+- `js/app.js` — Toast notifications (`showToast()`), action handlers (`action-btn-sm`), task status polling (`pollTaskStatus()`, `enqueue_task()`)
 
 ### 3. modules/fetch_emails.py - Gmail Integration
 - **Purpose**: Handles all Gmail API interactions
@@ -161,10 +181,17 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
       └── ...
   ```
 
+- **OAuth Scopes**: `gmail.readonly` + `calendar.readonly`
+- **Token Sharing**: Gmail and Calendar share the same token file per keyword
+
 ### 4. modules/web_auth.py - Web OAuth Setup
 - Handles OAuth flow for web/remote setups
-- Uses itcyou tunnel for callback URL
-- Exchanges authorization code for token
+- `get_auth_url(client_config, state)`: Generates Google OAuth URL with all required params
+- `exchange_code_for_token(code, client_config)`: Exchanges auth code for access/refresh tokens
+- `get_callback_url()`: Returns `OAUTH_CALLBACK_URL` from env (default: `http://localhost:8000/oauth/callback`)
+- `get_credential_type(client_config)`: Detects `"web"` vs `"installed"` (desktop) client type
+- `get_client_id(client_config)`, `get_client_secret(client_config)`: Extract from config
+- `load_client_config()`: Loads `client_secret_web.json` first, falls back to `client_secret.json`
 
 ### 5. modules/fetch_calendar.py - Google Calendar Integration
 - **Purpose**: Handles all Google Calendar API interactions
@@ -190,16 +217,23 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `clear_all()`: Delete all users from Redis
   - `count()` / `exists(keyword)`: Cardinality checkers
 - **Type Handling**: Bools stored as `1`/`0`, ints as strings, rehydrated on read
+- **ALL_FIELDS**: `name`, `email`, `keyword`, `active`, `use_email`, `use_whatsapp`, `fetch_calendar`, `max_email_results`, `days_threshold`, `schedule_time`, `smtp_host_user`, `smtp_host_password`, `mobile`
+- **BOOL_FIELDS**: `active`, `use_email`, `use_whatsapp`, `fetch_calendar`
+- **INT_FIELDS**: `max_email_results`, `days_threshold`
 
 ### 7. modules/agent_mod.py - LLM Integration
 - **Purpose**: Wrapper for LLM summarization
 - **Key Functions**:
   - `init()`: Initializes LLM from config (MODEL_PROVIDER)
-  - `summarize_emails(emails, prompt)`: Generates HTML summary
+  - `summarize_emails(emails, prompt, user_name, calendar_events)`: Generates summary
   - `hot_switch_model(provider, model_name, temperature)`: Hot-swap LLM at runtime
 - **Supported Providers**: nvidia, openai, groq, openrouter, google
 
-### 8. modules/prompt.py - Prompt Templates
+### 8. modules/agent_utils.py - LLM Factory
+- `create_llm(model_name, api_key, model_provider, model_temperature, max_tokens)`: Factory function
+- `MODEL_REGISTRY`: Dict mapping provider names to config (module, class, api_key_env, model_env)
+
+### 9. modules/prompt.py - Prompt Templates
 - **Variables**:
   - `EMAIL_SYSTEM_PROMPT`: HTML summary format with inline CSS
   - `WHATSAPP_SYSTEM_PROMPT`: Plain-text WhatsApp format with *bold*, _italic_, emoji markers
@@ -207,7 +241,14 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `CALENDAR_WHATSAPP_PROMPT`: Calendar events → WhatsApp format
   - `SYSTEM_PROMPT`: Backward-compat alias for EMAIL_SYSTEM_PROMPT
 
-### 9. modules/ipython_startup.py - Magic Functions
+### 10. modules/logger.py - Logging
+- Uses loguru with custom format
+- `get_logger(module_name, show_time=True)`: Returns a bound logger
+- `add_file_logger(log_path, rotation, retention)`: Adds file handler
+- Format: `LEVEL | MODULE_NAME | message` (with optional timestamp)
+- Respects `ENV_MODE`: DEBUG in dev, INFO in prod
+
+### 11. modules/ipython_startup.py - Magic Functions
 - Available in IPython inside the huey container
 - Provides `%daily_email_summary`, `%send_email_summary <keyword>`, etc.
 
@@ -219,38 +260,52 @@ Morning-Mailer/
 ├── admin/                      # FastAPI admin panel
 │   ├── main.py                 # App entry point
 │   ├── config.py               # Settings from .env
-│   ├── auth.py                 # Session auth + CSRF
+│   ├── auth.py                 # Session auth + CSRF + AuthMiddleware
 │   ├── models.py               # Pydantic models
-│   ├── services.py             # Business logic (enqueues huey tasks)
+│   ├── services.py             # Business logic (enqueues huey tasks, logging)
 │   ├── routes/
-│   │   ├── auth_routes.py      # Login/logout
-│   │   ├── user_routes.py      # User CRUD
-│   │   ├── action_routes.py    # Trigger actions
-│   │   ├── oauth_routes.py     # OAuth flow
-│   │   └── system_routes.py    # Redis/scheduler status
+│   │   ├── auth_routes.py      # Login/logout (logging)
+│   │   ├── user_routes.py      # User CRUD (logging, edit redirects with ?updated=1)
+│   │   ├── action_routes.py    # Trigger actions (logging)
+│   │   ├── oauth_routes.py     # OAuth flow (/callback BEFORE /{keyword}!)
+│   │   └── system_routes.py    # Redis/scheduler status (logging)
 │   ├── templates/              # Jinja2 HTML templates
-│   └── static/                 # CSS + JS
+│   │   ├── base.html           # Base layout (navbar block, scripts block)
+│   │   ├── login.html          # Login page (no navbar)
+│   │   ├── dashboard.html      # Dashboard with stats/actions
+│   │   ├── users.html          # User list with search/sort, OAuth setup + copy buttons
+│   │   ├── user_form.html      # Add/edit form (checkbox JS fix, SMTP placeholders, success toast)
+│   │   ├── oauth_redirect.html # OAuth redirect (uses | safe filter for URLs in scripts)
+│   │   └── oauth_result.html   # OAuth result page
+│   └── static/
+│       ├── css/style.css       # Purple gradient glassmorphism theme
+│       └── js/app.js           # Toast notifications + task polling
 ├── modules/
 │   ├── fetch_emails.py         # Gmail API
 │   ├── fetch_calendar.py       # Google Calendar API
 │   ├── agent_mod.py            # LLM wrapper
-│   ├── agent_utils.py          # LLM factory
+│   ├── agent_utils.py          # LLM factory (MODEL_REGISTRY)
 │   ├── prompt.py               # Prompt templates
-│   ├── logger.py               # Logging
+│   ├── logger.py               # Logging (get_logger)
 │   ├── generics.py             # Utilities
 │   ├── redis_users.py          # Redis user storage
-│   ├── web_auth.py             # Web OAuth setup
+│   ├── web_auth.py             # Web OAuth (get_auth_url, exchange_code_for_token)
 │   └── ipython_startup.py      # IPython magics
 ├── cli_users.py                # CLI for Redis user management
 ├── gauth/
 │   ├── client_secret.json      # Desktop OAuth (shared)
-│   ├── client_secret_web.json  # Web OAuth (shared)
+│   ├── client_secret_web.json  # Web OAuth (recommended)
 │   └── tokens/                 # One token per user
+│       ├── token_<keyword>.json
+│       └── ...
 ├── users.json                  # User definitions (fallback)
 ├── .env                        # Configuration
+├── .env.sample                 # Environment template
 ├── Dockerfile                  # Container image
-├── compose.yml                 # Docker orchestration
-└── pyproject.toml              # Dependencies
+├── compose.yml                 # Docker orchestration (4 services)
+├── pyproject.toml              # Dependencies
+├── README.md                   # Human-readable docs
+└── AGENTS.md                   # This file (LLM-facing docs)
 ```
 
 ## Running Commands
@@ -331,11 +386,13 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 
 ## Data Flow
 
+### Scheduled Processing
 ```
 1. Huey scheduler triggers every SCHEDULE_CHECK_INTERVAL minutes
            │
            ▼
 2. daily_summary() called
+    └── On first run: prints startup summary (guarded by _startup_summary_printed)
            │
            ▼
 3. For each active user in Redis:
@@ -350,7 +407,7 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 5. For each eligible user:
     ├── Fetch emails (fetch_emails_with_retry)
     ├── Fetch calendar events if fetch_calendar=true
-    ├── Summarize with LLM (email or WhatsApp prompt)
+    ├── Summarize with LLM (get_agent().summarize_emails())
     ├── Send via enabled channels
     └── Update Redis last_run tracking
 ```
@@ -388,6 +445,40 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 9. Response: {"task_id": "abc123", "status": "finished", "result": {...}}
 ```
 
+### OAuth Flow (Admin Panel)
+```
+1. User clicks "Setup" button on users page
+           │
+           ▼
+2. GET /oauth/{keyword}
+    └── services.generate_oauth_url(keyword)
+        ├── Loads client_secret_web.json (or client_secret.json)
+        ├── Uses OAUTH_CALLBACK_URL from .env
+        └── Returns full Google OAuth URL
+           │
+           ▼
+3. oauth_redirect.html renders with auth_url
+    └── Uses {{ auth_url | safe }} in <script> (NOT {{ auth_url }} — & gets escaped to &amp;)
+    └── Auto-redirects after 1.5s + shows manual "Open" button
+           │
+           ▼
+4. User authorizes on Google
+           │
+           ▼
+5. Google redirects to /oauth/callback?state={keyword}&code={code}
+    └── AuthMiddleware EXEMPT for /oauth/callback (no session needed)
+    └── Route /callback defined BEFORE /{keyword} to avoid matching as keyword="callback"
+           │
+           ▼
+6. oauth_callback() extracts keyword from state param
+    └── services.exchange_oauth_code(code, keyword)
+        ├── Exchanges code for tokens
+        └── Saves to gauth/tokens/token_{keyword}.json
+           │
+           ▼
+7. Renders oauth_result.html with success/failure
+```
+
 ## Key Configuration
 
 ### .env Variables
@@ -409,7 +500,7 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 | `ENV_MODE` | dev/prod mode | dev |
 | `EMAIL_HOST_USER` | SMTP username | - |
 | `EMAIL_HOST_PASSWORD` | SMTP password | - |
-| `OAUTH_CALLBACK_URL` | OAuth callback URL | - |
+| `OAUTH_CALLBACK_URL` | OAuth callback URL | http://localhost:8000/oauth/callback |
 | `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
 | `WAHA_API_KEY` | WAHA API key | - |
 | `WAHA_SESSION` | WAHA session name | default |
@@ -427,6 +518,12 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 - Email and WhatsApp tracked separately in Redis
 - Each user runs once per day in PROD, multiple times in DEV
 
+### Environment Modes (`ENV_MODE`)
+| Mode | Run Frequency | Log Level | Description |
+|------|--------------|-----------|-------------|
+| `dev` | Multiple times/day | DEBUG | Skips Redis last_run check, verbose logs |
+| `prod` | Once per day only | SUCCESS | Enforces Redis last_run check, minimal logs |
+
 ## Token Setup
 
 ### Option A: Desktop OAuth
@@ -436,8 +533,13 @@ uv run python -m modules.fetch_emails setup <keyword>
 
 ### Option B: Web OAuth (admin panel)
 1. Open http://localhost:8000/users
-2. Click red X icon next to user
+2. Click "Setup" button next to user without token
 3. Complete Google OAuth flow
+4. Token saved to `gauth/tokens/token_{keyword}.json`
+
+**Google Cloud Console Requirements for Web OAuth:**
+- Authorized redirect URI: `http://localhost:8000/oauth/callback`
+- Authorized JS origin: `http://localhost:8000`
 
 ### Option C: IPython
 ```bash
@@ -465,6 +567,22 @@ docker compose exec huey uv run ipython
 - **rich**: CLI formatting
 - **WAHA**: WhatsApp HTTP API
 
+## Logging
+
+All admin modules use `modules.logger.get_logger("Module Name")`:
+
+| Module | Logger Name |
+|--------|-------------|
+| `admin/services.py` | `Admin Services` |
+| `admin/routes/user_routes.py` | `Admin Routes` |
+| `admin/routes/action_routes.py` | `Admin Actions` |
+| `admin/routes/auth_routes.py` | `Admin Auth` |
+| `admin/routes/oauth_routes.py` | `Admin OAuth` |
+| `admin/routes/system_routes.py` | `Admin System` |
+| `tasks.py` | `tasks` (uses raw loguru) |
+
+Log levels used: `log.info()` for actions, `log.success()` for completed operations, `log.warning()` for non-critical issues, `log.error()` for failures.
+
 ## Adding New Features
 
 ### To add a new LLM provider:
@@ -479,11 +597,19 @@ docker compose exec huey uv run ipython
 1. Add `@huey.task` decorated function in `tasks.py`
 2. Add enqueue function in `admin/services.py`
 3. Add route in `admin/routes/action_routes.py`
+4. Add log calls using `modules.logger.get_logger()`
 
 ### To add a new admin panel page:
 1. Add route in `admin/routes/`
 2. Add template in `admin/templates/`
 3. Add navigation link in `base.html`
+
+### To add a new user form field:
+1. Add to `ALL_FIELDS` in `modules/redis_users.py`
+2. Add to `BOOL_FIELDS` or `INT_FIELDS` if applicable
+3. Add form input in `admin/templates/user_form.html`
+4. Add field handling in `admin/routes/user_routes.py` (both add and edit routes)
+5. Update `user_fields()` in `admin/services.py` descriptions
 
 ## Environment Setup Priority
 
@@ -494,3 +620,25 @@ When a user is processed:
 Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they get:
 - schedule_time: "09:00" (from user config)
 - max_email_results: 20 (from .env default)
+
+## Known Pitfalls & Solutions
+
+1. **Jinja2 auto-escaping in `<script>` tags**: `{{ url }}` escapes `&` to `&amp;`. Use `{{ url | safe }}` for URLs in script tags.
+
+2. **HTML checkboxes send nothing when unchecked**: Add hidden inputs or use JS to inject them on form submit. See `user_form.html` `.toggle-field` pattern.
+
+3. **FastAPI route matching order**: Fixed paths (`/callback`) must be defined BEFORE dynamic paths (`/{keyword}`) or they'll be captured as path params.
+
+4. **Auth middleware must exempt OAuth callback**: The `/oauth/callback` path needs no session. Add to `EXEMPT_PATHS` in `auth.py`.
+
+5. **Edit form should redirect, not return JSON**: Use `RedirectResponse(url=..., status_code=303)` after POST, then check `?updated=1` query param in GET to show toast.
+
+6. **LLM must not load in app container**: `AGENT = None` at module level, `get_agent()` is lazy. Never call `AGENT.init()` at import time.
+
+7. **Startup summary must not repeat**: Guard with `_startup_summary_printed` flag, call only inside `daily_summary()`.
+
+8. **OAuth callback URL must match port**: `OAUTH_CALLBACK_URL` in `.env` must match the actual host port the admin panel is accessible on.
+
+9. **Docker bind mount stale cache**: If a file was created after container start, `Path.exists()` may return False even though `ls` shows it. Restart or rebuild the container.
+
+10. **SMTP form placeholders**: Pass `.env` values to template as `env_smtp_user`/`env_smtp_password` for placeholder display. User's custom values go in `value=""`, not placeholder.

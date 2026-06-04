@@ -1,6 +1,6 @@
-# Morning Mailer 🤖📧📱
+# Morning Mailer
 
-AI-powered multi-user email summarization that fetches your Gmail (or multiple Gmail accounts), generates AI summaries in HTML for email and plain-text for WhatsApp, and delivers them to each user daily — with a full admin panel for management.
+AI-powered multi-user email summarization system with a FastAPI admin panel. Fetches emails from multiple Gmail accounts, generates AI summaries using LLMs, and delivers them via email (HTML) and/or WhatsApp (plain text) — all managed through a web UI.
 
 ## What It Does
 
@@ -33,10 +33,14 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 └──────────────┘
 ```
 
-- **App container** (`app`): FastAPI admin panel — UI, user CRUD, enqueues huey tasks. Does NOT load LLM or heavy modules.
-- **Huey container** (`huey`): Task queue consumer — does all actual work (fetching, summarizing, sending). LLM is lazy-initialized on first task.
-- **Valkey container** (`valkey`): Redis for task queue, user storage, scheduling state
-- **WAHA container** (`waha`): WhatsApp HTTP API for sending messages
+| Container | Purpose | Does | Does NOT |
+|-----------|---------|------|----------|
+| `app` | FastAPI admin panel | UI, user CRUD, enqueue huey tasks, OAuth flow | Execute heavy tasks (fetching, LLM, sending) |
+| `huey` | Task queue consumer | Process all huey tasks (fetch emails, summarize, send) | Serve UI |
+| `valkey` | Redis | Task queue, user storage, scheduling state | - |
+| `waha` | WhatsApp API | Send WhatsApp messages | - |
+
+The admin panel **never executes heavy work directly** — it only enqueues huey tasks and polls for results.
 
 ## Features
 
@@ -49,29 +53,26 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 - **Per-Channel Toggle**: Enable/disable email (`use_email`) and WhatsApp (`use_whatsapp`) per user
 - **Calendar Integration**: Include Google Calendar events in summaries (`fetch_calendar` per-user toggle)
 - **Admin Panel**: Full web UI for managing users, triggering actions, monitoring status
+- **OAuth Setup**: Setup Google OAuth tokens through the browser (no CLI needed)
 - **Task Queue Architecture**: Admin panel enqueues tasks, huey container executes them asynchronously
 
 ## Quick Start
 
 ### Prerequisites
 - Docker & Docker Compose
-- Gmail OAuth credentials (one client_secret.json for all users)
+- Gmail OAuth credentials (one `client_secret_web.json` for all users)
 - LLM API key (NVIDIA, OpenAI, Groq, or OpenRouter)
 - Gmail SMTP credentials for sending emails
 
 ### 1. Get Gmail OAuth Credentials
 1. Go to [Google Cloud Console](https://console.cloud.google.com)
-2. Create a project → Enable Gmail API + Google Calendar API
-3. Create OAuth Desktop credentials (download JSON) → save as `gauth/client_secret.json`
-
-**Or for Web OAuth (recommended):**
-1. Create OAuth Client ID → select **Web application**
-2. Add authorized JavaScript origin: `http://localhost:47433`
-3. Add authorized redirect URI: `http://localhost:47433/callback`
-4. Download JSON → save as `gauth/client_secret_web.json`
+2. Create a project → Enable **Gmail API** + **Google Calendar API**
+3. Create OAuth Client ID → select **Web application**
+4. Add authorized JavaScript origin: `http://localhost:8000`
+5. Add authorized redirect URI: `http://localhost:8000/oauth/callback`
+6. Download JSON → save as `gauth/client_secret_web.json`
 
 ### 2. Configure .env
-Copy `.env.sample` to `.env` and fill in your values:
 ```bash
 cp .env.sample .env
 ```
@@ -156,19 +157,17 @@ Each user needs an OAuth token for Gmail/Calendar access.
 #### Option A: Desktop OAuth (local machine)
 ```bash
 uv run python -m modules.fetch_emails setup <keyword>
-# Example:
-uv run python -m modules.fetch_emails setup dhimanparas20
 ```
 
 #### Option B: Web OAuth (via admin panel)
 1. Open http://localhost:8000/users
-2. Click the red X icon next to a user without a token
-3. Complete Google OAuth flow
+2. Click the "Setup" button next to a user without a token
+3. Complete Google OAuth flow — token is saved automatically
 
 #### Option C: IPython
 ```bash
 docker compose exec huey uv run ipython
-%setup_oauth dhimanparas20
+%setup_oauth <keyword>
 %check_tokens
 ```
 
@@ -195,51 +194,52 @@ Morning-Mailer/
 ├── admin/                      # FastAPI admin panel
 │   ├── main.py                 # App entry point
 │   ├── config.py               # Settings from .env
-│   ├── auth.py                 # Session auth + CSRF
+│   ├── auth.py                 # Session auth + CSRF + AuthMiddleware
 │   ├── models.py               # Pydantic models
 │   ├── services.py             # Business logic (enqueues huey tasks)
 │   ├── routes/
 │   │   ├── auth_routes.py      # Login/logout
-│   │   ├── user_routes.py      # User CRUD
+│   │   ├── user_routes.py      # User CRUD + HTML forms
 │   │   ├── action_routes.py    # Trigger actions (email/whatsapp/calendar)
-│   │   ├── oauth_routes.py     # OAuth flow
+│   │   ├── oauth_routes.py     # OAuth flow (/callback BEFORE /{keyword})
 │   │   └── system_routes.py    # Redis/scheduler status
 │   ├── templates/              # Jinja2 HTML templates
-│   │   ├── base.html           # Base layout (glassmorphism)
-│   │   ├── login.html          # Login page
+│   │   ├── base.html           # Base layout (glassmorphism, navbar/scripts blocks)
+│   │   ├── login.html          # Login page (no navbar)
 │   │   ├── dashboard.html      # Dashboard with stats/actions
-│   │   ├── users.html          # User list with search/sort
-│   │   ├── user_form.html      # Add/edit user form
-│   │   ├── oauth_redirect.html # OAuth redirect page
-│   │   └── oauth_result.html   # OAuth result page
+│   │   ├── users.html          # User list with search/sort + OAuth Setup/Copy buttons
+│   │   ├── user_form.html      # Add/edit form (checkbox JS fix, SMTP placeholders)
+│   │   ├── oauth_redirect.html # Redirects to Google OAuth (uses | safe filter)
+│   │   └── oauth_result.html   # OAuth success/failure result
 │   └── static/
 │       ├── css/style.css       # Purple gradient glassmorphism theme
 │       └── js/app.js           # Toast notifications + task polling
 ├── modules/
 │   ├── fetch_emails.py         # Gmail API (keyword-based tokens)
-│   ├── fetch_calendar.py       # Google Calendar API (keyword-based tokens)
-│   ├── agent_mod.py            # LLM wrapper
-│   ├── agent_utils.py          # LLM factory
+│   ├── fetch_calendar.py       # Google Calendar API (shares tokens with Gmail)
+│   ├── agent_mod.py            # LLM wrapper (summarize_emails)
+│   ├── agent_utils.py          # LLM factory (MODEL_REGISTRY)
 │   ├── prompt.py               # Prompt templates (email + WhatsApp + calendar)
-│   ├── logger.py               # Logging
+│   ├── logger.py               # Logging (get_logger)
 │   ├── generics.py             # Utilities
 │   ├── redis_users.py          # Redis user storage & CRUD
-│   ├── web_auth.py             # Web OAuth setup
+│   ├── web_auth.py             # Web OAuth (get_auth_url, exchange_code_for_token)
 │   └── ipython_startup.py      # IPython magic functions
 ├── cli_users.py                # CLI for Redis user management
 ├── gauth/                      # OAuth credentials
 │   ├── client_secret.json      # Desktop OAuth (legacy)
 │   ├── client_secret_web.json  # Web OAuth (recommended)
 │   └── tokens/                 # One token per user
-│       ├── token_<keyword>.json
-│       └── ...
+│       └── token_<keyword>.json
 ├── users.json                  # User definitions (fallback)
 ├── users.json.sample           # User template
 ├── .env                        # Configuration
 ├── .env.sample                 # Environment template
 ├── Dockerfile                  # Container image
-├── compose.yml                 # Docker orchestration
-└── pyproject.toml              # Dependencies
+├── compose.yml                 # Docker orchestration (4 services)
+├── pyproject.toml              # Dependencies
+├── README.md                   # This file
+└── AGENTS.md                   # LLM-facing codebase docs
 ```
 
 ## Docker Services
@@ -284,9 +284,9 @@ Access at http://localhost:8000 (default: admin/changeme)
 
 ### Features
 - **Dashboard**: Stats cards, quick actions, scheduler config, users overview
-- **Users**: Full CRUD with search/sort/filter, per-user action buttons
+- **Users**: Full CRUD with search/sort/filter, per-user action buttons, OAuth Setup + Copy buttons
 - **Actions**: Trigger email/whatsapp summaries, force all, test send
-- **OAuth**: Setup OAuth tokens through the browser
+- **OAuth**: Setup OAuth tokens through the browser (click "Setup" → authorize → done)
 - **System**: Redis status, model switching, last-run clearing
 
 ### Architecture
@@ -294,6 +294,7 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 - Admin panel responds immediately with a task ID
 - Actual work happens asynchronously in the huey container
 - Frontend polls `/actions/status/{task_id}` for completion
+- Edit user form redirects back to form with success toast (not JSON)
 
 ## Configuration
 
@@ -315,7 +316,7 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 | `ENV_MODE` | dev/prod mode | dev |
 | `EMAIL_HOST_USER` | SMTP fallback username | - |
 | `EMAIL_HOST_PASSWORD` | SMTP fallback password | - |
-| `OAUTH_CALLBACK_URL` | Callback URL for remote OAuth | - |
+| `OAUTH_CALLBACK_URL` | OAuth callback URL | http://localhost:8000/oauth/callback |
 | `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
 | `WAHA_API_KEY` | WAHA API key | - |
 | `WAHA_SESSION` | WAHA session name | default |
@@ -376,7 +377,7 @@ docker compose restart huey
 ```
 
 ### Gmail credentials not found
-- Ensure `gauth/client_secret.json` exists
+- Ensure `gauth/client_secret_web.json` exists
 - Ensure `gauth/tokens/token_<keyword>.json` exists for each user
 
 ### Email sending fails
@@ -385,10 +386,15 @@ docker compose restart huey
 
 ### OAuth token not found
 ```bash
-# Generate new token
+# Generate new token via admin panel: http://localhost:8000/users
+# Or via CLI:
 uv run python -m modules.fetch_emails setup <keyword>
-# Or via admin panel: http://localhost:8000/users
 ```
+
+### OAuth callback fails
+- Ensure `OAUTH_CALLBACK_URL` in `.env` matches the port your admin panel is on
+- Ensure Google Cloud Console redirect URI matches exactly: `http://localhost:8000/oauth/callback`
+- Ensure Google Cloud Console JS origin includes: `http://localhost:8000`
 
 ## Tech Stack
 
