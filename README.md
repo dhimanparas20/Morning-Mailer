@@ -57,7 +57,9 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - **Task Queue Architecture**: Admin panel enqueues tasks, huey container executes them asynchronously
 - **Bulk Actions**: Select multiple users with checkboxes, trigger email/WhatsApp/revoke in bulk
 - **Summary Templates**: Per-user custom prompt for email summarization (stored in Redis)
-- **CSV Export**: Export all users as a downloadable CSV file
+- **CSV Export**: Download all users as CSV via Users page
+- **JSON Import/Export**: Import users by uploading a JSON file, or export current users as JSON download
+- **Audit Logs**: Full task-level audit trail stored in Redis (60-day TTL), viewable with search/filter/sort in the Logs admin page
 - **Per-User History**: Track email/WhatsApp sends in Redis, viewable per user
 - **Token Expiry Alerts**: Badges showing token health (Ready/Expiring/Expired) in users table
 - **Job Status Checker**: Paste a task ID to check its status on the dashboard
@@ -217,7 +219,8 @@ Morning-Mailer/
 │   │   ├── users.html          # User list with search/sort, bulk selection, token badges, history, OAuth Setup/Copy buttons
 │   │   ├── user_form.html      # Add/edit form (checkbox JS fix, SMTP placeholders, summary template)
 │   │   ├── oauth_redirect.html # Redirects to Google OAuth (uses | safe filter)
-│   │   └── oauth_result.html   # OAuth success/failure result
+│   │   ├── oauth_result.html   # OAuth success/failure result
+│   │   └── audit_log.html      # Audit log viewer with search/filter/sort/pagination
 │   └── static/
 │       ├── css/style.css       # Purple gradient glassmorphism theme
 │       └── js/app.js           # Toast notifications, task ID copy, bulk selection, history/calendar modals, job status checker
@@ -294,8 +297,9 @@ Access at http://localhost:8000 (default: admin/changeme)
 - **Users**: Full CRUD with search/sort/filter, per-user action buttons, OAuth Setup + Revoke + Copy buttons, token expiry badges (Ready/Expiring/Expired), history button, bulk selection checkboxes
 - **Bulk Actions**: Select multiple users → trigger email/WhatsApp/revoke tokens for all selected
 - **Summary Templates**: Per-user custom prompt textarea in edit form, stored in Redis
-- **CSV Export**: Download all users as a CSV file via Users page
+- **Import/Export**: Import users by uploading a JSON file (Users page → Import), or download as JSON or CSV
 - **Actions**: Trigger email/whatsapp summaries, force all, test send, calendar fetch — returns task ID with copy button
+- **Audit Logs**: Browse all task executions with filtering by task type, keyword, status, and free-text search. Pagination and auto-refresh included
 - **Job Status**: Paste a task ID to check its status (pending/finished/error)
 - **OAuth**: Setup OAuth tokens through the browser (click "Setup" → authorize → done)
 - **System**: Redis status, model switching, last-run clearing

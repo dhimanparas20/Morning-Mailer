@@ -103,6 +103,10 @@ def update_user(keyword: str, data: dict[str, Any]) -> None:
         if not existing:
             raise ValueError(f"User '{keyword}' not found")
         merged = {**existing, **{k: v for k, v in data.items() if v is not None}}
+        # Remove keys explicitly submitted as empty (e.g. cleared SMTP fields → use .env defaults)
+        for key in ("smtp_host_user", "smtp_host_password"):
+            if key in data and not data[key]:
+                merged.pop(key, None)
         mgr.add_or_update(merged)
         log.success(f"Updated user '{keyword}'")
     else:
@@ -110,7 +114,11 @@ def update_user(keyword: str, data: dict[str, Any]) -> None:
         idx = next((i for i, u in enumerate(users) if u.get("keyword") == keyword), None)
         if idx is None:
             raise ValueError(f"User '{keyword}' not found")
-        users[idx] = {**users[idx], **{k: v for k, v in data.items() if v is not None}}
+        merged = {**users[idx], **{k: v for k, v in data.items() if v is not None}}
+        for key in ("smtp_host_user", "smtp_host_password"):
+            if key in data and not data[key]:
+                merged.pop(key, None)
+        users[idx] = merged
         _save_users_json(users)
         log.success(f"Updated user '{keyword}' [JSON]")
 
@@ -182,6 +190,24 @@ def import_users(path: str = "users.json") -> int:
             users = json.load(f)
         _save_users_json(users)
         log.success(f"Imported {len(users)} user(s) from {path} [JSON]")
+        return len(users)
+
+
+def import_users_from_list(users: list[dict[str, Any]]) -> int:
+    """Import users from a list of dicts (e.g. uploaded file)."""
+    mgr = _import_user_mgr()
+    if mgr is not None:
+        count = 0
+        for user in users:
+            mgr.add_or_update(user)
+            count += 1
+        log.success(f"Imported {count} user(s) from uploaded list")
+        return count
+    else:
+        existing = _list_users_json()
+        existing.extend(users)
+        _save_users_json(existing)
+        log.success(f"Imported {len(users)} user(s) from uploaded list [JSON]")
         return len(users)
 
 
@@ -362,6 +388,68 @@ def export_users_csv() -> str:
                 row[k] = v
         writer.writerow(row)
     return output.getvalue()
+
+
+# ── Audit Log ──────────────────────────────────────────────────────────────
+
+AUDIT_LOG_KEY = "morning_mailer:audit_log"
+
+
+def get_audit_log(limit: int = 50, offset: int = 0, task: str | None = None,
+                  keyword: str | None = None, status_filter: str | None = None,
+                  q: str | None = None) -> dict[str, Any]:
+    """Get audit log entries from Redis with filtering and pagination."""
+    r = get_redis()
+    if not r:
+        return {"entries": [], "total": 0, "limit": limit, "offset": offset,
+                "tasks": [], "keywords": [], "statuses": []}
+
+    # Fetch a generous window for filtering — enough for most pagination + filter needs
+    FETCH_WINDOW = 5000
+    raw = r.lrange(AUDIT_LOG_KEY, 0, FETCH_WINDOW - 1)
+    all_entries = []
+    tasks_set: set[str] = set()
+    keywords_set: set[str] = set()
+    statuses_set: set[str] = set()
+
+    for item in raw:
+        try:
+            entry = json.loads(item)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        all_entries.append(entry)
+        tasks_set.add(entry.get("task", ""))
+        keywords_set.add(entry.get("keyword", ""))
+        statuses_set.add(entry.get("status", ""))
+
+    # Apply filters
+    filtered = all_entries
+    if task:
+        filtered = [e for e in filtered if e.get("task") == task]
+    if keyword:
+        filtered = [e for e in filtered if e.get("keyword") == keyword]
+    if status_filter:
+        filtered = [e for e in filtered if e.get("status") == status_filter]
+    if q:
+        ql = q.lower()
+        filtered = [e for e in filtered if
+                    ql in (e.get("task", "") or "").lower()
+                    or ql in (e.get("keyword", "") or "").lower()
+                    or ql in (e.get("details", "") or "").lower()
+                    or ql in (e.get("status", "") or "").lower()]
+
+    total = len(filtered)
+    page = filtered[offset:offset + limit]
+
+    return {
+        "entries": page,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "tasks": sorted(tasks_set - {""}),
+        "keywords": sorted(keywords_set - {""}),
+        "statuses": sorted(statuses_set - {""}),
+    }
 
 
 # ── History Tracking ──────────────────────────────────────────────────────
