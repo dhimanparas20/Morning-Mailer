@@ -68,7 +68,6 @@ services:
     build:
       context: .
     image: morning-mailer
-    container_name: huey
     restart: unless-stopped
     env_file:
       - .env
@@ -108,7 +107,6 @@ services:
     build:
       context: .
     image: morning-mailer
-    container_name: app
     restart: unless-stopped
     env_file:
       - .env
