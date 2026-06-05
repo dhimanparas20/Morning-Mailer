@@ -6,7 +6,7 @@
     <div class="d-flex gap-2">
         <a href="/users/add" class="btn btn-success btn-sm"><i class="bi bi-plus-lg"></i> Add User</a>
         <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#importModal"><i class="bi bi-upload"></i> Import</button>
-        <button class="btn btn-outline-info btn-sm" id="exportBtn"><i class="bi bi-download"></i> Export</button>
+        <button class="btn btn-outline-info btn-sm" id="exportJsonBtn"><i class="bi bi-download"></i> Export JSON</button>
         <a href="/users/export/csv" class="btn btn-outline-info btn-sm" title="Export CSV"><i class="bi bi-filetype-csv"></i> CSV</a>
     </div>
 </div>
@@ -155,12 +155,13 @@
                 <h5 class="modal-title fw-semibold"><i class="bi bi-upload" style="color:var(--mm-primary)"></i> Import Users</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
-            <form id="importForm">
+            <form id="importForm" enctype="multipart/form-data">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="modal-body">
                     <div class="mb-3">
-                        <label class="form-label">File Path</label>
-                        <input type="text" name="filepath" class="form-control" value="users.json">
+                        <label class="form-label">Upload JSON File</label>
+                        <input type="file" name="file" class="form-control" accept=".json" required>
+                        <div class="form-text">JSON file must be an array of user objects. <a href="/users/export/json" class="text-info">Download sample</a></div>
                     </div>
                 </div>
                 <div class="modal-footer border-0 pt-0">
@@ -213,10 +214,8 @@ document.getElementById('importForm')?.addEventListener('submit', async function
     location.reload();
 });
 
-document.getElementById('exportBtn')?.addEventListener('click', async function() {
-    const fd = new FormData();
-    fd.append('csrf_token', '{{ csrf_token }}');
-    await postForm('/users/export', fd);
+document.getElementById('exportJsonBtn')?.addEventListener('click', function() {
+    window.location.href = '/users/export/json';
 });
 
 document.querySelectorAll('.copy-oauth-btn').forEach(function(btn) {

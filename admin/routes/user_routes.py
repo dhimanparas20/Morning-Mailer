@@ -1,6 +1,6 @@
 import os
 import json
-from fastapi import APIRouter, Request, Form, HTTPException, Query
+from fastapi import APIRouter, Request, Form, HTTPException, Query, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
@@ -168,10 +168,9 @@ async def edit_user_submit(
         data["days_threshold"] = int(days_threshold)
     if schedule_time:
         data["schedule_time"] = schedule_time
-    if smtp_host_user:
-        data["smtp_host_user"] = smtp_host_user
-    if smtp_host_password:
-        data["smtp_host_password"] = smtp_host_password
+    # Always include SMTP fields to allow clearing them (empty = remove key, use .env defaults)
+    data["smtp_host_user"] = smtp_host_user
+    data["smtp_host_password"] = smtp_host_password
     if mobile:
         data["mobile"] = mobile
     if summary_template:
@@ -225,9 +224,21 @@ async def revoke_token_submit(keyword: str, csrf_token: str = Form(...)):
 
 
 @router.post("/import")
-async def import_users_submit(filepath: str = Form("users.json"), csrf_token: str = Form(...)):
+async def import_users_submit(request: Request, file: UploadFile = File(None), csrf_token: str = Form(...)):
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
+    if file and file.filename:
+        content = await file.read()
+        try:
+            users = json.loads(content)
+        except json.JSONDecodeError as e:
+            raise HTTPException(400, f"Invalid JSON: {e}")
+        if not isinstance(users, list):
+            raise HTTPException(400, "JSON must be an array of user objects")
+        n = services.import_users_from_list(users)
+        log.success(f"Imported {n} user(s) from uploaded file '{file.filename}'")
+        return {"ok": True, "message": f"Imported {n} user(s)", "count": n}
+    filepath: str = "users.json"
     n = services.import_users(filepath)
     log.success(f"Imported {n} user(s) from {filepath}")
     return {"ok": True, "message": f"Imported {n} user(s)", "count": n}
@@ -253,6 +264,21 @@ async def export_users_csv():
         io.StringIO(csv_data),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=users.csv"},
+    )
+
+
+@router.get("/export/json")
+async def export_users_json():
+    from fastapi.responses import StreamingResponse
+    import io
+    users = services.list_users()
+    if not users:
+        raise HTTPException(404, "No users to export")
+    data = json.dumps(users, indent=2, default=str)
+    return StreamingResponse(
+        io.StringIO(data),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=users.json"},
     )
 
 
