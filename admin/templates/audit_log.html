@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}Audit Logs - Morning Mailer{% endblock %}
+{% block content %}
+
+<!-- Stats + Header -->
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="fw-bold mb-1"><i class="bi bi-journal-text" style="color:var(--mm-primary)"></i> Audit Logs</h4>
+        <p class="text-muted mb-0">Track every task execution across the system</p>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+        <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" id="autoRefresh" checked>
+            <label class="form-check-label text-muted small" for="autoRefresh">Auto-refresh <span id="refreshInterval">30s</span></label>
+        </div>
+        <button class="btn btn-sm btn-outline-primary" onclick="loadAuditLogs()" title="Refresh now">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+</div>
+
+<!-- Filter Bar -->
+<div class="card mb-4">
+    <div class="card-body py-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label small text-muted mb-1">Task</label>
+                <select id="filterTask" class="form-select form-select-sm" onchange="loadAuditLogs()">
+                    <option value="">All Tasks</option>
+                    {% for t in all_tasks %}
+                    <option value="{{ t }}">{{ t }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted mb-1">Keyword</label>
+                <select id="filterKeyword" class="form-select form-select-sm" onchange="loadAuditLogs()">
+                    <option value="">All Users</option>
+                    {% for k in all_keywords %}
+                    <option value="{{ k }}">{{ k }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted mb-1">Status</label>
+                <select id="filterStatus" class="form-select form-select-sm" onchange="loadAuditLogs()">
+                    <option value="">All Status</option>
+                    {% for s in all_statuses %}
+                    <option value="{{ s }}">{{ s }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted mb-1">Search</label>
+                <input type="text" id="filterSearch" class="form-control form-control-sm" placeholder="Search details..." onkeyup="debounceSearch()">
+            </div>
+            <div class="col-md-2 d-grid">
+                <button class="btn btn-sm btn-primary" onclick="loadAuditLogs()"><i class="bi bi-funnel"></i> Apply</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Entries Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center py-3">
+        <h5 class="mb-0 fw-semibold">
+            <i class="bi bi-list-ul" style="color:var(--mm-primary)"></i>
+            Log Entries
+            <span class="badge bg-secondary ms-2" id="entryCount">{{ total }}</span>
+        </h5>
+        <div class="d-flex gap-2 align-items-center">
+            <span class="text-muted small" id="paginationInfo">1-{{ entries|length }} of {{ total }}</span>
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-secondary" id="prevPage" onclick="changePage(-1)" disabled>
+                    <i class="bi bi-chevron-left"></i>
+                </button>
+                <button class="btn btn-outline-secondary" id="nextPage" onclick="changePage(1)">
+                    <i class="bi bi-chevron-right"></i>
+                </button>
+            </div>
+            <select id="pageSize" class="form-select form-select-sm" style="width:auto" onchange="loadAuditLogs()">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="auditLogTable">
+                <thead>
+                    <tr>
+                        <th style="width:60px">#</th>
+                        <th style="width:180px">Time</th>
+                        <th style="width:180px">Task</th>
+                        <th style="width:120px">Keyword</th>
+                        <th style="width:90px">Status</th>
+                        <th style="width:80px">Duration</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody id="auditLogBody">
+                    {% for entry in entries %}
+                    <tr>
+                        <td class="text-muted small">{{ loop.index }}</td>
+                        <td class="small" data-ts="{{ entry.ts }}">{{ entry.ts | format_timestamp }}</td>
+                        <td><code class="small">{{ entry.task }}</code></td>
+                        <td><span class="badge bg-secondary">{{ entry.keyword }}</span></td>
+                        <td>{% set status_class = {"success": "bg-success", "error": "bg-danger", "skipped": "bg-warning text-dark"}.get(entry.status, "bg-secondary") %}
+                            <span class="badge {{ status_class }}">{{ entry.status }}</span></td>
+                        <td class="small text-muted">{{ entry.duration | fmt_duration }}</td>
+                        <td class="small text-muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ entry.details or '' }}">{{ entry.details or "-" }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-4">
+                            <i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:0.5rem"></i>
+                            No log entries yet. Logs appear when tasks are executed.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 0;
+let refreshTimer = null;
+
+function debounceSearch() {
+    clearTimeout(window._searchTimer);
+    window._searchTimer = setTimeout(loadAuditLogs, 400);
+}
+
+function formatTimestamp(ts) {
+    const d = new Date(ts * 1000);
+    const now = new Date();
+    const diff = now - d;
+    if (diff < 60000) return 'Just now';
+    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+    return d.toLocaleString();
+}
+
+async function loadAuditLogs() {
+    const task = document.getElementById('filterTask').value;
+    const keyword = document.getElementById('filterKeyword').value;
+    const status = document.getElementById('filterStatus').value;
+    const q = document.getElementById('filterSearch').value;
+    const limit = parseInt(document.getElementById('pageSize').value);
+    const offset = currentPage * limit;
+
+    const params = new URLSearchParams({ limit, offset });
+    if (task) params.set('task', task);
+    if (keyword) params.set('keyword', keyword);
+    if (status) params.set('status', status);
+    if (q) params.set('q', q);
+
+    try {
+        const res = await fetch(`/system/audit-log?${params}`);
+        const data = await res.json();
+        renderAuditLog(data);
+    } catch (err) {
+        console.error('Failed to load audit logs:', err);
+    }
+}
+
+function renderAuditLog(data) {
+    const tbody = document.getElementById('auditLogBody');
+    const count = document.getElementById('entryCount');
+    const info = document.getElementById('paginationInfo');
+    const prevBtn = document.getElementById('prevPage');
+    const nextBtn = document.getElementById('nextPage');
+
+    count.textContent = data.total;
+
+    const start = data.offset + 1;
+    const end = Math.min(data.offset + data.limit, data.total);
+    info.textContent = data.total === 0 ? '0 entries' : `${start}-${end} of ${data.total}`;
+
+    prevBtn.disabled = currentPage === 0;
+    nextBtn.disabled = end >= data.total;
+
+    if (data.entries.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">
+            <i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:0.5rem"></i>
+            No log entries match your filters.
+        </td></tr>`;
+        return;
+    }
+
+    let html = '';
+    data.entries.forEach((entry, i) => {
+        const idx = data.offset + i + 1;
+        const ts = formatTimestamp(entry.ts);
+        const statusClass = ({success: 'bg-success', error: 'bg-danger', skipped: 'bg-warning text-dark'})[entry.status] || 'bg-secondary';
+        const duration = entry.duration != null ? entry.duration.toFixed(2) + 's' : '-';
+        const details = entry.details || '-';
+        const escapedDetails = details.replace(/"/g, '&quot;');
+        html += `<tr>
+            <td class="text-muted small">${idx}</td>
+            <td class="small">${ts}</td>
+            <td><code class="small">${esc(entry.task)}</code></td>
+            <td><span class="badge bg-secondary">${esc(entry.keyword)}</span></td>
+            <td><span class="badge ${statusClass}">${esc(entry.status)}</span></td>
+            <td class="small text-muted">${duration}</td>
+            <td class="small text-muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapedDetails}">${esc(details)}</td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+
+    // Update filter dropdowns with any new values
+    updateFilterDropdown('filterTask', data.tasks);
+    updateFilterDropdown('filterKeyword', data.keywords);
+    updateFilterDropdown('filterStatus', data.statuses);
+}
+
+function updateFilterDropdown(id, values) {
+    const select = document.getElementById(id);
+    if (!select) return;
+    const current = select.value;
+    const selectedSet = new Set(values);
+    let needsUpdate = false;
+    for (let i = 0; i < select.options.length; i++) {
+        const opt = select.options[i];
+        if (opt.value && !selectedSet.has(opt.value)) {
+            needsUpdate = true;
+            break;
+        }
+    }
+    if (!needsUpdate) return;
+    const html = ['<option value="">' + select.options[0].text + '</option>'];
+    values.forEach(v => {
+        html.push(`<option value="${esc(v)}"${v === current ? ' selected' : ''}>${esc(v)}</option>`);
+    });
+    select.innerHTML = html.join('');
+}
+
+function changePage(delta) {
+    currentPage += delta;
+    if (currentPage < 0) currentPage = 0;
+    loadAuditLogs();
+}
+
+function esc(s) {
+    if (s == null) return '';
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+// Auto-refresh
+function setupAutoRefresh() {
+    const cb = document.getElementById('autoRefresh');
+    const label = document.getElementById('refreshInterval');
+    let interval = 30000;
+
+    function tick() {
+        if (cb.checked) loadAuditLogs();
+    }
+
+    cb.addEventListener('change', () => {
+        if (refreshTimer) clearInterval(refreshTimer);
+        if (cb.checked) refreshTimer = setInterval(tick, interval);
+    });
+
+    refreshTimer = setInterval(tick, interval);
+}
+
+// Initial load with slight delay to let page render
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(setupAutoRefresh, 500);
+});
+</script>
+{% endblock %}

@@ -71,8 +71,8 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 - **Huey Tasks (enqueued by admin panel)**:
   - `huey_send_email_to_user(keyword)`: Fetch, summarize, send email to one user
   - `huey_send_whatsapp_to_user(keyword)`: Fetch, summarize, send WhatsApp to one user
-  - `huey_force_email_all()`: Force email for ALL users
-  - `huey_force_whatsapp_all()`: Force WhatsApp for ALL users
+  - `huey_force_email_all()`: Force email for ALL users (also sets WhatsApp last_run to prevent duplicate scheduled processing)
+  - `huey_force_whatsapp_all()`: Force WhatsApp for ALL users (also sets email last_run to prevent duplicate scheduled processing)
   - `huey_fetch_calendar_and_send_email(keyword, days)`: Calendar → email
   - `huey_fetch_calendar_and_send_whatsapp(keyword, days)`: Calendar → WhatsApp
   - `huey_fetch_calendar_and_send_both(keyword, days)`: Calendar → both
@@ -136,6 +136,16 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 - **Note**: Tasks module is imported once at startup (no `importlib.reload`) to avoid re-initializing module-level code in the app container.
 - **Logging**: Uses `modules.logger.get_logger("Admin Services")` for all operations
 
+#### Audit Logging System
+
+- **`audit_log(task_name, keyword, status, details, duration)`** in `tasks.py` — records every task execution to Redis list `morning_mailer:audit_log` with 60-day TTL
+- **Log coverage**: Every `@huey.task` function logs on completion, plus `fetch_emails_with_retry`, `fetch_calendar_events_with_retry`, `send_email`, and `send_whatsapp` log granular operation-level entries
+- **`get_audit_log(limit, offset, task, keyword, status_filter, q)`** in `admin/services.py` — fetches, filters, and paginates audit log entries from Redis
+- **`GET /system/audit-log`** — JSON API for the audit log viewer
+- **`GET /audit-log`** — HTML audit log viewer page with search, filter dropdowns, pagination, and auto-refresh
+- **Key**: `morning_mailer:audit_log` (TTL: 60 days)
+- **Entry format**: `{ts, task, keyword, status, details?, duration?}`
+
 #### 2.6 admin/routes/ - API Routes
 
 | Router | Prefix | Purpose |
@@ -144,7 +154,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 | `user_routes` | `/users` | User CRUD, search/sort, import/export |
 | `action_routes` | `/actions` | Trigger email/whatsapp/calendar actions, test send, model switch |
 | `oauth_routes` | `/oauth` | OAuth start + callback |
-| `system_routes` | `/system` | Redis status, scheduler status, tokens status |
+| `system_routes` | `/system` | Redis status, scheduler status, tokens status, audit log |
 
 **Important Route Ordering in oauth_routes.py**: `/callback` MUST be defined BEFORE `/{keyword}` otherwise FastAPI matches `callback` as a keyword. The `/callback` path is the fixed OAuth callback URL used by Google redirect.
 
@@ -154,6 +164,16 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 - `POST /users/{keyword}/token/revoke` — deletes token file, requires CSRF
 - `POST /users/add` — creates user, returns JSON
 - `GET /users/export/csv` — streams all users as CSV download
+- `POST /users/export` — bulk export trigger (enqueues tasks)
+
+**User Form Routes**:
+- `GET /users/{keyword}/edit` — renders edit form, passes `success_msg` from `?updated=1` query param
+- `POST /users/{keyword}/edit` — updates user, redirects to `GET /users/{keyword}/edit?updated=1` (303 redirect, NOT JSON)
+- `POST /users/{keyword}/token/revoke` — deletes token file, requires CSRF
+- `POST /users/add` — creates user, returns JSON
+- `GET /users/export/csv` — streams all users as CSV download
+- `GET /users/export/json` — streams all users as JSON download
+- `POST /users/import` — accepts uploaded JSON file (`UploadFile`) or text `filepath` fallback. Imports users into Redis
 - `POST /users/export` — bulk export trigger (enqueues tasks)
 
 **Action Routes**:
@@ -177,6 +197,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 | `user_form.html` | Add/edit user form with section headers, .env SMTP fallback placeholders, checkbox JS fix, summary template textarea, success toast via `?updated=1` |
 | `oauth_redirect.html` | Redirects to Google OAuth. Uses `{{ auth_url | safe }}` in script tag (NOT `{{ auth_url }}` — Jinja2 escapes `&` to `&amp;` which breaks OAuth URLs) |
 | `oauth_result.html` | Shows OAuth success/failure with link back to users |
+| `audit_log.html` | Audit log viewer with search, filter dropdowns, pagination, and auto-refresh |
 
 #### 2.8 admin/static/ - Static Files
 - `css/style.css` — Purple gradient glassmorphism theme
@@ -297,7 +318,8 @@ Morning-Mailer/
 │   │   ├── users.html          # User list with search/sort, bulk selection, token expiry badges, history, OAuth setup + copy buttons
 │   │   ├── user_form.html      # Add/edit form (checkbox JS fix, SMTP placeholders, summary template, success toast)
 │   │   ├── oauth_redirect.html # OAuth redirect (uses | safe filter for URLs in scripts)
-│   │   └── oauth_result.html   # OAuth result page
+│   │   ├── oauth_result.html   # OAuth result page
+│   │   └── audit_log.html      # Audit log viewer (search, filter dropdowns, pagination, auto-refresh)
 │   └── static/
 │       ├── css/style.css       # Purple gradient glassmorphism theme
 │       └── js/app.js           # Toast notifications + task ID copy + bulk selection + history/calendar modals
@@ -738,3 +760,5 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 15. **`apiPostWithBody()` for CSRF forms**: Routes using `Form(...)` need body data as `application/x-www-form-urlencoded`. `apiPost()` sends JSON which FastAPI rejects. Use `apiPostWithBody()` which sends `URLSearchParams` for form-based CSRF routes (delete, activate, deactivate, revoke, import, export).
 
 16. **History recording is fire-and-forget**: `record_history()` in `tasks.py` is wrapped in `try/except: pass`. History failures never break main task execution. Redis history keys auto-expire after 90 days.
+
+17. **Force tasks and last_run race condition**: `huey_force_whatsapp_all` and `huey_force_email_all` no longer delete `last_run` keys at the start (which created a race window where `daily_summary()` could also process the same user). Instead, force tasks set the complementary channel's `last_run` key after processing — e.g., `huey_force_whatsapp_all` also sets `morning_mailer:last_run:<keyword>` to prevent `daily_summary` from re-processing for email. This means forcing one channel fulfills both for the day's scheduled run.
