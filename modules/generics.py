@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 
 
 def current_date_ist() -> str:
+    """Return current date in IST (UTC+5:30) as 'July 17, 2026'."""
     ist_offset = timedelta(hours=5, minutes=30)
     ist_now = datetime.now(timezone.utc) + ist_offset
     return ist_now.strftime("%B %d, %Y")

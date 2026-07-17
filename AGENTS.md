@@ -270,29 +270,42 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `summarize_emails(emails, prompt, user_name, calendar_events)`: Generates summary
   - `hot_switch_model(provider, model_name, temperature)`: Hot-swap LLM at runtime
 - **Supported Providers**: nvidia, openai, groq, openrouter, google
+- **Placeholder Replacement**: Two placeholders are replaced at runtime in `summarize_emails()`:
+  - `{USER_NAME}` → user's display name
+  - `{CURRENT_DATE}` → `current_date_ist()` from `modules.generics` (returns IST date like "July 17, 2026")
 
 ### 8. modules/agent_utils.py - LLM Factory
 - `create_llm(model_name, api_key, model_provider, model_temperature, max_tokens)`: Factory function
 - `MODEL_REGISTRY`: Dict mapping provider names to config (module, class, api_key_env, model_env)
 
-### 9. modules/prompt.py - Prompt Templates
+### 9. modules/generics.py - Utilities
+- **Purpose**: Shared utility functions
+- **Key Functions**:
+  - `current_date_ist()`: Returns current date in IST (UTC+5:30) as "July 17, 2026" format
+  - `now_iso()`, `get_timestamp()`, `format_timestamp()`, `parse_datetime()`, `utc_to_local()`: Time helpers
+
+### 10. modules/prompt.py - Prompt Templates
 - **Variables**:
   - `EMAIL_SYSTEM_PROMPT`: HTML summary format with inline CSS
   - `WHATSAPP_SYSTEM_PROMPT`: Plain-text WhatsApp format with *bold*, _italic_, emoji markers
   - `CALENDAR_EMAIL_PROMPT`: Calendar events → HTML email format
   - `CALENDAR_WHATSAPP_PROMPT`: Calendar events → WhatsApp format
   - `SYSTEM_PROMPT`: Backward-compat alias for EMAIL_SYSTEM_PROMPT
+- **Placeholder Replacement**: Two placeholders are replaced at runtime in `summarize_emails()`:
+  - `{USER_NAME}` → user's display name
+  - `{CURRENT_DATE}` → `current_date_ist()` from `modules.generics` (returns IST date like "July 17, 2026")
 
-### 10. modules/logger.py - Logging
+### 11. modules/logger.py - Logging
 - Uses loguru with custom format
 - `get_logger(module_name, show_time=True)`: Returns a bound logger
 - `add_file_logger(log_path, rotation, retention)`: Adds file handler
 - Format: `LEVEL | MODULE_NAME | message` (with optional timestamp)
 - Respects `ENV_MODE`: DEBUG in dev, INFO in prod
 
-### 11. modules/ipython_startup.py - Magic Functions
+### 12. modules/ipython_startup.py - Magic Functions
 - Available in IPython inside the huey container
 - Provides `%daily_email_summary`, `%send_email_summary <keyword>`, etc.
+- **Important**: Always use `get_agent()` instead of importing raw `AGENT` — `AGENT = None` at module level and only `get_agent()` initializes it lazily. All magics in this module use `get_agent()` to avoid `AttributeError: 'NoneType' object has no attribute 'summarize_emails'`.
 
 ## File Structure
 
@@ -416,9 +429,31 @@ docker compose exec huey uv run ipython
 %setup_oauth <keyword>
 %check_tokens
 %fetch_calendar <keyword> [days]
+%send_calendar_email <keyword>
+%send_calendar_whatsapp <keyword>
+%send_calendar_both <keyword>
+%send_test_email <subject> <body>
+%send_test_whatsapp <mobile> <message>
+%summarize_whatsapp <keyword>
+%run_summarize <keyword>
+%check_job_status <job_id>
+%run_fetch <keyword>
+%setup_web_oauth <keyword>
 %redis_status
 %redis_users_list
+%redis_users_show <keyword>
+%redis_users_add --name X --email Y --keyword Z ...
+%redis_users_update <keyword> --field value ...
+%redis_users_remove <keyword>
+%redis_users_import
+%redis_users_export
+%redis_users_activate <keyword>
+%redis_users_deactivate <keyword>
+%redis_users_clear yes
+%redis_users_fields
+%switch_model <provider>
 %clear_last_run [keyword|all]
+%cls
 ```
 
 ### Direct Python (inside huey container)
@@ -641,6 +676,7 @@ The codebase uses `functools` extensively to cache pure helper functions and opt
 | `modules/fetch_calendar.py` | `_format_datetime()` | 256 | Pure datetime formatting |
 | `modules/fetch_calendar.py` | `_get_event_datetime()` | 256 | Pure event field extraction |
 | `modules/web_auth.py` | `get_callback_url()` | 1 | Static from env |
+| `modules/generics.py` | `current_date_ist()` | 1 | Static computation (IST offset is fixed) |
 | `modules/web_auth.py` | `get_credentials_path()` | 1 | Static path |
 | `modules/web_auth.py` | `get_web_credentials_path()` | 1 | Static path |
 | `modules/web_auth.py` | `load_client_config()` | 1 | Static JSON file |
@@ -739,7 +775,7 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 
 7. **Startup summary must not repeat**: Guard with `_startup_summary_printed` flag, call only inside `daily_summary()`.
 
-8. **OAuth callback URL must match port**: `OAUTH_CALLBACK_URL` in `.env` must match the actual host port the admin panel is accessible on.
+8. **OAuth callback URL must match full path `/oauth/callback`**: `OAUTH_CALLBACK_URL` in `.env` must be the full route (`https://host/oauth/callback`), not just `/callback`. The FastAPI route is prefix `/oauth` + path `/callback`. If set to just `/callback`, it won't match the route AND will be intercepted by `AuthMiddleware` (since `/callback` is NOT in `EXEMPT_PATHS`), redirecting to `/login`.
 
 9. **Docker bind mount stale cache**: If a file was created after container start, `Path.exists()` may return False even though `ls` shows it. Restart or rebuild the container.
 
@@ -762,3 +798,5 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 16. **History recording is fire-and-forget**: `record_history()` in `tasks.py` is wrapped in `try/except: pass`. History failures never break main task execution. Redis history keys auto-expire after 90 days.
 
 17. **Force tasks and last_run race condition**: `huey_force_whatsapp_all` and `huey_force_email_all` no longer delete `last_run` keys at the start (which created a race window where `daily_summary()` could also process the same user). Instead, force tasks set the complementary channel's `last_run` key after processing — e.g., `huey_force_whatsapp_all` also sets `morning_mailer:last_run:<keyword>` to prevent `daily_summary` from re-processing for email. This means forcing one channel fulfills both for the day's scheduled run.
+
+18. **`ipython_startup.py` must use `get_agent()` not `AGENT`**: The `AGENT` variable in `tasks.py` is `None` at module level — only `get_agent()` initializes it lazily. All IPython magic functions must import `get_agent` and call `get_agent().summarize_emails(...)` instead of importing `AGENT` directly, or they'll hit `AttributeError: 'NoneType' object has no attribute 'summarize_emails'`.

@@ -63,6 +63,7 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - **Per-User History**: Track email/WhatsApp sends in Redis, viewable per user
 - **Token Expiry Alerts**: Badges showing token health (Ready/Expiring/Expired) in users table
 - **Job Status Checker**: Paste a task ID to check its status on the dashboard
+- **Current Date in Prompts**: All LLM prompts include today's IST date via `{CURRENT_DATE}` placeholder — model never guesses the date
 
 ## Quick Start
 
@@ -331,7 +332,7 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 | `ENV_MODE` | dev/prod mode | dev |
 | `EMAIL_HOST_USER` | SMTP fallback username | - |
 | `EMAIL_HOST_PASSWORD` | SMTP fallback password | - |
-| `OAUTH_CALLBACK_URL` | OAuth callback URL | http://localhost:8000/oauth/callback |
+| `OAUTH_CALLBACK_URL` | OAuth callback URL (must end with `/oauth/callback`, NOT just `/callback`) | http://localhost:8000/oauth/callback |
 | `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
 | `WAHA_API_KEY` | WAHA API key | - |
 | `WAHA_SESSION` | WAHA session name | default |
@@ -412,6 +413,7 @@ uv run python -m modules.fetch_emails setup <keyword>
 
 ### OAuth callback fails
 - Ensure `OAUTH_CALLBACK_URL` in `.env` matches the port your admin panel is on
+- The callback URL **must** end with `/oauth/callback` (the full route is prefix `/oauth` + path `/callback`). A URL ending in just `/callback` will be intercepted by `AuthMiddleware` and redirected to `/login`.
 - Ensure Google Cloud Console redirect URI matches exactly: `http://localhost:8000/oauth/callback`
 - Ensure Google Cloud Console JS origin includes: `http://localhost:8000`
 
