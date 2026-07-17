@@ -22,6 +22,7 @@ htmlcov/
 
 # OAuth/Credentials (sensitive)
 gauth
+gauth/tokens/*
 gauth/token.json
 gauth/client_secret.json
 gauth/tokens/token_*.json

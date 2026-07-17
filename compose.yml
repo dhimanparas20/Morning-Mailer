@@ -87,6 +87,7 @@ services:
       - ./tasks.py:/app/tasks.py
       - ./cli_users.py:/app/cli_users.py
       - ./gauth:/app/gauth
+      - ./google_auth:/app/google_auth
       - ./users.json:/app/users.json
     command: uv run huey_consumer tasks.huey -k thread -w 1 --flush-locks info
     depends_on:
@@ -129,6 +130,7 @@ services:
       - ./modules:/app/modules
       - ./tasks.py:/app/tasks.py
       - ./gauth:/app/gauth
+      - ./google_auth:/app/google_auth
       - ./users.json:/app/users.json
       - ./.env:/app/.env
     command: uvicorn admin.main:app --host 0.0.0.0 --port 8000 --reload --proxy-headers --workers 1 --use-colors --log-level debug
