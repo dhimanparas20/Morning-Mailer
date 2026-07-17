@@ -62,7 +62,7 @@ def force_email_summary(line):
 @register_line_magic
 def force_whatsapp_summary(line):
     """Trigger WhatsApp summary for ALL users immediately (ignores schedule time)."""
-    from tasks import load_users, fetch_emails_with_retry, get_user_settings, has_valid_token, send_whatsapp, AGENT, SCHEDULE_TIME, redis_client
+    from tasks import load_users, fetch_emails_with_retry, get_user_settings, has_valid_token, send_whatsapp, get_agent, SCHEDULE_TIME, redis_client
     from modules.prompt import WHATSAPP_SYSTEM_PROMPT
     from datetime import datetime
     users = load_users()
@@ -91,7 +91,7 @@ def force_whatsapp_summary(line):
         if not result.get("success") or not result.get("emails"):
             print(f"    [yellow]No emails fetched[/yellow]")
             continue
-        summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
+        summary = get_agent().summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
         try:
             send_whatsapp(mobile, summary)
             today_str = datetime.now().strftime("%Y-%m-%d")
@@ -145,8 +145,8 @@ def switch_model(line):
     provider = parts[0]
     model_name = parts[1] if len(parts) > 1 else None
     temperature = float(parts[2]) if len(parts) > 2 else None
-    from tasks import AGENT
-    AGENT.hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
+    from tasks import get_agent
+    get_agent().hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
     print(f"[green]✓[/green] Model hot-switched to [bold]{provider}[/bold] ({model_name or 'default'}, temp: {temperature or 'default'})")
 
 
@@ -323,11 +323,11 @@ def summarize_whatsapp(line):
     if not keyword:
         print("Usage: %summarize_whatsapp <keyword>")
         return
-    from tasks import fetch_emails_with_retry, AGENT
+    from tasks import fetch_emails_with_retry, get_agent
     from modules.prompt import WHATSAPP_SYSTEM_PROMPT
     result = fetch_emails_with_retry(keyword=keyword, max_results=20, days_threshold=1)
     if result.get("emails"):
-        summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT)
+        summary = get_agent().summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT)
         print(summary)
     else:
         print("No emails to summarize")
@@ -385,7 +385,7 @@ def send_whatsapp_summary(line):
         print("  %send_whatsapp_summary dhimanparas20")
         print("  %send_whatsapp_summary 919418168860")
         return
-    from tasks import load_users, fetch_emails_with_retry, get_user_settings, has_valid_token, send_whatsapp, AGENT, SCHEDULE_TIME, redis_client
+    from tasks import load_users, fetch_emails_with_retry, get_user_settings, has_valid_token, send_whatsapp, get_agent, SCHEDULE_TIME, redis_client
     from modules.prompt import WHATSAPP_SYSTEM_PROMPT
     from datetime import datetime
     users = load_users()
@@ -413,7 +413,7 @@ def send_whatsapp_summary(line):
     if not result.get("success") or not result.get("emails"):
         print("[yellow]No emails fetched, nothing to summarize[/yellow]")
         return
-    summary = AGENT.summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
+    summary = get_agent().summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
     try:
         send_whatsapp(mobile, summary)
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -488,8 +488,8 @@ def send_calendar_email(line):
         return
 
     print(f"[cyan]Summarizing {len(result['events'])} event(s)...[/cyan]")
-    from tasks import AGENT
-    summary = AGENT.summarize_emails(result["events"], prompt=CALENDAR_EMAIL_PROMPT, user_name=user_name)
+    from tasks import get_agent
+    summary = get_agent().summarize_emails(result["events"], prompt=CALENDAR_EMAIL_PROMPT, user_name=user_name)
 
     send_email(
         to=user_email,
@@ -537,8 +537,8 @@ def send_calendar_whatsapp(line):
         return
 
     print(f"[cyan]Summarizing {len(result['events'])} event(s)...[/cyan]")
-    from tasks import AGENT
-    summary = AGENT.summarize_emails(result["events"], prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user_name)
+    from tasks import get_agent
+    summary = get_agent().summarize_emails(result["events"], prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user_name)
 
     try:
         send_whatsapp(mobile, summary)
@@ -582,11 +582,11 @@ def send_calendar_both(line):
 
     events = result["events"]
     print(f"[cyan]Summarizing {len(events)} event(s)...[/cyan]")
-    from tasks import AGENT
+    from tasks import get_agent
 
     # Send email
     try:
-        email_summary = AGENT.summarize_emails(events, prompt=CALENDAR_EMAIL_PROMPT, user_name=user_name)
+        email_summary = get_agent().summarize_emails(events, prompt=CALENDAR_EMAIL_PROMPT, user_name=user_name)
         send_email(
             to=user_email,
             subject=f"Calendar Summary - {user_name}",
@@ -602,7 +602,7 @@ def send_calendar_both(line):
     # Send WhatsApp
     if mobile:
         try:
-            wa_summary = AGENT.summarize_emails(events, prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user_name)
+            wa_summary = get_agent().summarize_emails(events, prompt=CALENDAR_WHATSAPP_PROMPT, user_name=user_name)
             send_whatsapp(mobile, wa_summary)
             print(f"[green]✓ WhatsApp sent to {mobile}[/green]")
         except Exception as e:
