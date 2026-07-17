@@ -7,21 +7,37 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from admin.config import get_settings
-from admin.auth import AuthMiddleware
+from admin.auth import AuthMiddleware, _get_redis
 from admin.routes import auth_routes, user_routes, action_routes, oauth_routes, system_routes
 from modules.generics import format_timestamp as _fmt_ts
 
 settings = get_settings()
 
+# ── Rate Limiter (Redis-backed) ────────────────────────────────────────────────
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    storage_uri=settings.REDIS_URL,
+    default_limits=["120 per minute"],
+    headers_enabled=True,
+)
+
 app = FastAPI(title="Morning Mailer Admin", docs_url=None, redoc_url=None)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(AuthMiddleware)
 
 app.mount("/static", StaticFiles(directory="admin/static"), name="static")
 
-app.include_router(auth_routes.router)
+# Auth routes mounted at /admin so callback is /admin/auth/callback
+app.include_router(auth_routes.router, prefix="/admin")
 app.include_router(user_routes.router)
 app.include_router(action_routes.router)
 app.include_router(oauth_routes.router)

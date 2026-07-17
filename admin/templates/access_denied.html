@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Access Denied - Morning Mailer{% endblock %}
+{% block navbar %}{% endblock %}
+{% block main_wrapper %}
+<div class="login-wrapper">
+    <div class="login-card p-5" style="max-width:440px;">
+        <div class="text-center mb-4">
+            <div class="login-icon" style="background:linear-gradient(135deg,#f87171,#dc2626);">
+                <i class="bi bi-shield-lock"></i>
+            </div>
+            <h2 class="login-title">Access Denied</h2>
+            <p class="login-subtitle">Your Google account is not authorized</p>
+        </div>
+
+        <div class="alert alert-danger py-3 px-3 mb-3 text-center" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            Your email is not in the allowed admin list.<br>
+            <small class="text-muted">Contact the administrator to request access.</small>
+        </div>
+
+        <div class="text-center">
+            <a href="/admin/login" class="btn btn-outline-primary" style="border-radius:12px;padding:0.6rem 2rem;">
+                <i class="bi bi-arrow-left me-1"></i> Back to Login
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

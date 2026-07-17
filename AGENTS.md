@@ -97,16 +97,20 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 
 #### 2.2 admin/config.py - Settings
 - Pydantic Settings loaded from `.env`
-- Key settings: `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `SECRET_KEY`, `REDIS_URL`
-- Also defines `CLIENT_SECRET_WEB_PATH` and `CLIENT_SECRET_PATH` for OAuth
+- Key settings: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ADMIN_EMAILS`, `SECRET_KEY`, `REDIS_URL`
+- `admin_email_set` property: parses `ADMIN_EMAILS` into a lowercase `set` for O(1) lookup
+- `GOOGLE_REDIRECT_URI`: admin login callback URL (default: `http://localhost:8000/admin/auth/callback`)
+- Also defines `CLIENT_SECRET_WEB_PATH` and `CLIENT_SECRET_PATH` for per-user OAuth
 
 #### 2.3 admin/auth.py - Authentication
-- Session-based auth (not JWT)
-- CSRF protection via double-submit cookie
-- `AuthMiddleware` intercepts requests, checks session
-- `EXEMPT_PATHS = {"/login", "/static", "/favicon.ico", "/oauth/callback"}` — callback MUST be exempt or OAuth flow breaks
+- Redis-backed sessions (`mm:session:` prefix) + CSRF (`mm:csrf:` prefix)
+- `AuthMiddleware` intercepts requests, checks session cookie (`session_token`)
+- `EXEMPT_PATHS = {"/admin/login", "/admin/auth/login", "/admin/auth/callback", "/admin/access-denied", "/static", "/favicon.ico", "/oauth/callback"}` — admin login paths MUST be exempt or OAuth flow breaks
 - `_cleanup_expired()` — 5-minute TTL pruning for sessions/CSRF, called in `create_session()` and `generate_csrf_token()` to prevent memory leaks
-- Login/logout endpoints
+- `create_session(user_email, user_name, user_picture)` → creates Redis session, returns token
+- `validate_session(token)` → reads from Redis, returns session data or None
+- `destroy_session(token)` → deletes from Redis
+- `_get_redis()` → lazy Redis connection singleton (uses `REDIS_URL` from config)
 
 #### 2.4 admin/models.py - Pydantic Models
 - `UserCreate`, `UserUpdate` — user form validation
@@ -150,10 +154,10 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 
 | Router | Prefix | Purpose |
 |--------|--------|---------|
-| `auth_routes` | `/login`, `/logout` | Login/logout with CSRF |
+| `auth_routes` | `/admin` | Google OAuth login, logout, access denied (PKCE + Redis state) |
 | `user_routes` | `/users` | User CRUD, search/sort, import/export |
 | `action_routes` | `/actions` | Trigger email/whatsapp/calendar actions, test send, model switch |
-| `oauth_routes` | `/oauth` | OAuth start + callback |
+| `oauth_routes` | `/oauth` | Per-user Gmail/Calendar OAuth start + callback |
 | `system_routes` | `/system` | Redis status, scheduler status, tokens status, audit log |
 
 **Important Route Ordering in oauth_routes.py**: `/callback` MUST be defined BEFORE `/{keyword}` otherwise FastAPI matches `callback` as a keyword. The `/callback` path is the fixed OAuth callback URL used by Google redirect.
@@ -197,6 +201,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 | `user_form.html` | Add/edit user form with section headers, .env SMTP fallback placeholders, checkbox JS fix, summary template textarea, success toast via `?updated=1` |
 | `oauth_redirect.html` | Redirects to Google OAuth. Uses `{{ auth_url | safe }}` in script tag (NOT `{{ auth_url }}` — Jinja2 escapes `&` to `&amp;` which breaks OAuth URLs) |
 | `oauth_result.html` | Shows OAuth success/failure with link back to users |
+| `access_denied.html` | Shows access denied page for unauthorized admin login emails |
 | `audit_log.html` | Audit log viewer with search, filter dropdowns, pagination, and auto-refresh |
 
 #### 2.8 admin/static/ - Static Files
@@ -319,7 +324,7 @@ Morning-Mailer/
 │   ├── models.py               # Pydantic models
 │   ├── services.py             # Business logic (enqueues huey tasks, bulk actions, history, CSV export, logging)
 │   ├── routes/
-│   │   ├── auth_routes.py      # Login/logout (logging)
+│   │   ├── auth_routes.py      # Google OAuth admin login (PKCE + Redis state)
 │   │   ├── user_routes.py      # User CRUD (logging, edit redirects with ?updated=1, CSV export, token revoke, summary template)
 │   │   ├── action_routes.py    # Trigger actions (logging), bulk endpoints, history, calendar fetch modal
 │   │   ├── oauth_routes.py     # OAuth flow (/callback BEFORE /{keyword}!)
@@ -393,8 +398,7 @@ docker compose logs -f          # All services
 open http://localhost:8000
 
 # Default credentials
-Username: admin
-Password: changeme
+Google OAuth login (must be listed in ADMIN_EMAILS in .env)
 
 # Rebuild admin panel only
 docker compose up -d --build app
@@ -516,6 +520,43 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 ```
 
 ### OAuth Flow (Admin Panel)
+
+There are two distinct OAuth flows:
+
+#### Admin Login (Google OAuth for admin panel access)
+```
+1. User opens http://localhost:8000
+           │
+           ▼
+2. AuthMiddleware checks session_token cookie
+    └── No valid session → redirect to /admin/login
+           │
+           ▼
+3. User clicks "Sign in with Google"
+    └── GET /admin/auth/login
+        ├── Generate random state + PKCE code_verifier
+        ├── Save state to Redis (mm:oauth_state:{state}, TTL 10min)
+        ├── Save code_verifier to Redis (mm:oauth_pkce:{state})
+        └── Redirect to Google OAuth URL with PKCE params
+           │
+           ▼
+4. User authorizes on Google
+           │
+           ▼
+5. Google redirects to /admin/auth/callback?state={state}&code={code}
+    └── AuthMiddleware EXEMPT for /admin/auth/callback (no session needed)
+           │
+           ▼
+6. google_callback() verifies state from Redis (one-time use)
+    └── Exchange code for tokens via httpx (with PKCE code_verifier)
+    └── Fetch userinfo from Google
+    └── Check email against ADMIN_EMAILS set
+           │
+           ├── Email allowed → create Redis session → set session_token cookie → redirect to /
+           └── Email denied → redirect to /admin/access-denied
+```
+
+#### Per-User Gmail/Calendar OAuth
 ```
 1. User clicks "Setup" button on users page
            │
@@ -571,11 +612,13 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 | `EMAIL_HOST_USER` | SMTP username | - |
 | `EMAIL_HOST_PASSWORD` | SMTP password | - |
 | `OAUTH_CALLBACK_URL` | OAuth callback URL | http://localhost:8000/oauth/callback |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID (for admin login) | - |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | - |
+| `GOOGLE_REDIRECT_URI` | Admin login callback URL | http://localhost:8000/admin/auth/callback |
+| `ADMIN_EMAILS` | Comma-separated allowed admin emails | - |
 | `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
 | `WAHA_API_KEY` | WAHA API key | - |
 | `WAHA_SESSION` | WAHA session name | default |
-| `ADMIN_USERNAME` | Admin panel username | admin |
-| `ADMIN_PASSWORD` | Admin panel password | changeme |
 | `SECRET_KEY` | Session secret key | - |
 | `ADMIN_PORT` | Admin panel port | 8000 |
 
@@ -626,6 +669,8 @@ docker compose exec huey uv run ipython
 - **pydantic-settings**: Settings management
 - **huey**: Task queue & scheduler
 - **google-api-python-client**: Gmail + Calendar API
+- **authlib**: Google OAuth for admin login (PKCE flow)
+- **httpx**: Async HTTP client for OAuth token exchange
 - **langchain-nvidia-ai-endpoints**: NVIDIA LLM
 - **langchain-openai**: OpenAI LLM
 - **langchain-groq**: Groq LLM
@@ -767,7 +812,7 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 
 3. **FastAPI route matching order**: Fixed paths (`/callback`) must be defined BEFORE dynamic paths (`/{keyword}`) or they'll be captured as path params.
 
-4. **Auth middleware must exempt OAuth callback**: The `/oauth/callback` path needs no session. Add to `EXEMPT_PATHS` in `auth.py`.
+4. **Auth middleware must exempt admin login AND OAuth callback**: Both `/admin/auth/callback` and `/oauth/callback` paths need no session. Add ALL admin login paths to `EXEMPT_PATHS` in `auth.py` (`/admin/login`, `/admin/auth/login`, `/admin/auth/callback`, `/admin/access-denied`).
 
 5. **Edit form should redirect, not return JSON**: Use `RedirectResponse(url=..., status_code=303)` after POST, then check `?updated=1` query param in GET to show toast.
 
@@ -800,3 +845,7 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 17. **Force tasks and last_run race condition**: `huey_force_whatsapp_all` and `huey_force_email_all` no longer delete `last_run` keys at the start (which created a race window where `daily_summary()` could also process the same user). Instead, force tasks set the complementary channel's `last_run` key after processing — e.g., `huey_force_whatsapp_all` also sets `morning_mailer:last_run:<keyword>` to prevent `daily_summary` from re-processing for email. This means forcing one channel fulfills both for the day's scheduled run.
 
 18. **`ipython_startup.py` must use `get_agent()` not `AGENT`**: The `AGENT` variable in `tasks.py` is `None` at module level — only `get_agent()` initializes it lazily. All IPython magic functions must import `get_agent` and call `get_agent().summarize_emails(...)` instead of importing `AGENT` directly, or they'll hit `AttributeError: 'NoneType' object has no attribute 'summarize_emails'`.
+
+19. **Admin OAuth uses PKCE + Redis state (not SessionMiddleware)**: The admin login flow does NOT use authlib's `authorize_redirect`/`authorize_access_token` (which depend on `SessionMiddleware`). Instead, it manually generates PKCE challenges, saves state + code_verifier to Redis, and exchanges codes via `httpx`. This avoids cookie conflicts between `SessionMiddleware`'s `session` cookie and our Redis-backed `session_token` cookie. Do NOT re-add `SessionMiddleware` to `main.py`.
+
+20. **Two separate OAuth callback paths**: `/admin/auth/callback` (admin login) and `/oauth/callback` (per-user Gmail/Calendar tokens) are different routes. They share the same GCP OAuth app credentials but serve different purposes. Both must be registered as redirect URIs in GCP Console.

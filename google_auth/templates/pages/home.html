@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project_name }}{% endblock %}
+
+{% block content %}
+<section class="auth-page" aria-labelledby="home-title">
+  <div class="auth-container">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-logo">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="48" height="48" rx="12" fill="var(--color-accent)" opacity="0.15"/>
+            <path d="M24 12C17.373 12 12 17.373 12 24s5.373 12 12 12 12-5.373 12-12S30.627 12 24 12zm0 3.6c2.07 0 3.96.74 5.42 1.97l-2.23 2.14A6.94 6.94 0 0024 18.6a6.94 6.94 0 00-6.19 3.11l-2.23-2.14A11.94 11.94 0 0124 15.6zM15.6 24c0-1.22.28-2.38.78-3.42l2.23 2.14A6.96 6.96 0 0017.1 24c0 1.15.35 2.22.95 3.11l-2.23 2.14A11.9 11.9 0 0115.6 24zm4.44 6.4a6.94 6.94 0 006.19 3.11c1.54 0 2.93-.6 3.98-1.58l-2.1-2.01a6.92 6.92 0 01-1.88.84 6.94 6.94 0 01-6.19-3.11l-2.23 2.14c1.18 1.43 2.85 2.37 4.23 2.71zM24 30.6c-2.07 0-3.96-.74-5.42-1.97l2.23-2.14c.82.69 1.85 1.11 2.99 1.11.88 0 1.7-.27 2.37-.74l2.23 2.14A11.94 11.94 0 0124 30.6zm8.4-5.4l-2.23-2.14a6.96 6.96 0 00.95-3.11c0-1.15-.35-2.22-.95-3.11l2.23-2.14a11.9 11.9 0 01.87 5.25c0 1.84-.58 3.54-1.56 4.95l-1.31.3z" fill="var(--color-accent)"/>
+          </svg>
+        </div>
+        <h1 id="home-title" class="auth-title">{{ project_name }}</h1>
+        <p class="auth-subtitle">{{ project_tagline }}</p>
+      </div>
+
+      <!-- CUSTOMIZE: Add your landing page content here -->
+      <div class="auth-body">
+        <a href="/login" class="btn btn-google" role="button">
+          Get Started
+        </a>
+      </div>
+    </div>
+
+    <div class="auth-illustration">
+      <div class="auth-illustration-content">
+        <div class="auth-feature">
+          <div class="auth-feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Secure Authentication</h3>
+            <p>Industry-standard OAuth 2.0 with Google</p>
+          </div>
+        </div>
+        <div class="auth-feature">
+          <div class="auth-feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Fast & Seamless</h3>
+            <p>One-click sign in with your Google account</p>
+          </div>
+        </div>
+        <div class="auth-feature">
+          <div class="auth-feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0110 0v4"/>
+            </svg>
+          </div>
+          <div>
+            <h3>Privacy First</h3>
+            <p>We never store your password</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

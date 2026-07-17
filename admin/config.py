@@ -13,8 +13,6 @@ CLIENT_SECRET_PATH = BASE_DIR / "gauth" / "client_secret.json"
 
 
 class Settings(BaseSettings):
-    ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "changeme"
     SECRET_KEY: str = "morning-mailer-admin-secret-change-in-production"
     SESSION_EXPIRE_MINUTES: int = 480
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -25,7 +23,20 @@ class Settings(BaseSettings):
     ADMIN_HOST: str = "0.0.0.0"
     ADMIN_PORT: int = 8000
 
+    # Google OAuth (Admin Login)
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    JWT_SECRET_KEY: str = "change-this-to-a-random-jwt-secret-key"
+    ADMIN_EMAILS: str = "dhimanparas20@gmail.com"
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/auth/callback"
+    APP_BASE_URL: str = "http://localhost:8000"
+
     model_config = {"env_file": str(BASE_DIR / ".env"), "extra": "ignore"}
+
+    @property
+    def admin_email_set(self) -> set[str]:
+        """Parse comma-separated ADMIN_EMAILS into a set of lowercase emails."""
+        return {e.strip().lower() for e in self.ADMIN_EMAILS.split(",") if e.strip()}
 
 
 @lru_cache

@@ -238,12 +238,15 @@ code {
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 2rem 1rem;
     background:
         radial-gradient(ellipse at 30% 40%, rgba(139, 92, 246, 0.15) 0%, transparent 60%),
         radial-gradient(ellipse at 70% 60%, rgba(99, 102, 241, 0.1) 0%, transparent 60%);
 }
 
 .login-card {
+    width: 100%;
+    max-width: 420px;
     background: rgba(20, 20, 45, 0.7);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
@@ -318,6 +321,78 @@ code {
     letter-spacing: 0.02em;
 }
 
+/* ── Google Login Button ─────────────────────────────────────────────────── */
+
+.btn-google-login {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    width: 100%;
+    padding: 0.85rem 1.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    color: #e2e8f0;
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.25s ease;
+    cursor: pointer;
+}
+
+.btn-google-login:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+.btn-google-login:active {
+    transform: translateY(0);
+}
+
+.btn-google-login svg {
+    flex-shrink: 0;
+}
+
+.login-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 1.5rem 0;
+    color: #475569;
+    font-size: 0.8rem;
+}
+
+.login-divider::before,
+.login-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(139, 92, 246, 0.15);
+}
+
+/* ── User Avatar (Navbar) ────────────────────────────────────────────────── */
+
+.user-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid rgba(139, 92, 246, 0.4);
+    object-fit: cover;
+}
+
+.user-email-nav {
+    font-size: 0.875rem;
+    color: rgba(226, 232, 240, 0.8);
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* ── Toast Notifications ────────────────────────────────────────────────── */
 
 .toast-container { position: fixed; bottom: 1rem; right: 1rem; z-index: 9999; }
@@ -338,10 +413,33 @@ code {
     background: rgba(139, 92, 246, 0.5);
 }
 
+/* ── Dropdown Menu ─────────────────────────────────────────────────────── */
+
+.dropdown-menu {
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+}
+
+.dropdown-item {
+    color: #e2e8f0;
+    transition: background 0.15s;
+}
+
+.dropdown-item:hover {
+    background: rgba(139, 92, 246, 0.1);
+    color: var(--mm-primary-light);
+}
+
+.dropdown-item.text-danger:hover {
+    background: rgba(248, 113, 113, 0.1);
+    color: var(--mm-danger);
+}
+
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 
 @media (max-width: 768px) {
     .table-responsive { font-size: 0.85rem; }
     .btn-group-sm .btn { padding: 0.2rem 0.4rem; }
     .login-card { margin: 1rem; border-radius: 20px; }
+    .user-email-nav { display: none; }
 }

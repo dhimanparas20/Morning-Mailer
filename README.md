@@ -72,13 +72,16 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - Gmail OAuth credentials (one `client_secret_web.json` for all users)
 - LLM API key (NVIDIA, OpenAI, Groq, or OpenRouter)
 - Gmail SMTP credentials for sending emails
+- A Google Cloud project with **OAuth consent screen** configured (for admin login)
 
 ### 1. Get Gmail OAuth Credentials
 1. Go to [Google Cloud Console](https://console.cloud.google.com)
 2. Create a project → Enable **Gmail API** + **Google Calendar API**
 3. Create OAuth Client ID → select **Web application**
 4. Add authorized JavaScript origin: `http://localhost:8000`
-5. Add authorized redirect URI: `http://localhost:8000/oauth/callback`
+5. Add **two** authorized redirect URIs:
+   - `http://localhost:8000/admin/auth/callback` (for admin panel login)
+   - `http://localhost:8000/oauth/callback` (for per-user Gmail/Calendar OAuth)
 6. Download JSON → save as `gauth/client_secret_web.json`
 
 ### 2. Configure .env
@@ -104,9 +107,11 @@ EMAIL_HOST_PASSWORD=your-app-password
 # Redis
 REDIS_URL=redis://:testpass@valkey:6379/0
 
-# Admin Panel
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=changeme
+# Admin Panel (Google OAuth Login)
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:8000/admin/auth/callback
+ADMIN_EMAILS=dhimanparas20@gmail.com
 SECRET_KEY=change-this-to-a-random-secret-key
 ADMIN_PORT=8000
 
@@ -122,7 +127,7 @@ Users are stored in **Redis** (Valkey) as hashes at `USERS_CONFIG:<keyword>`.
 #### Option A: Admin Panel (recommended)
 1. Start the stack: `docker compose up -d`
 2. Open http://localhost:8000
-3. Login with admin/changeme
+3. Login with your Google account (must be listed in `ADMIN_EMAILS` in `.env`)
 4. Add users via the UI
 
 #### Option B: CLI
@@ -208,7 +213,7 @@ Morning-Mailer/
 │   ├── models.py               # Pydantic models
 │   ├── services.py             # Business logic (enqueues huey tasks, bulk actions, history, CSV export)
 │   ├── routes/
-│   │   ├── auth_routes.py      # Login/logout
+│   │   ├── auth_routes.py      # Google OAuth admin login (PKCE + Redis state)
 │   │   ├── user_routes.py      # User CRUD, CSV export, token revoke, summary template handling
 │   │   ├── action_routes.py    # Trigger actions (email/whatsapp/calendar), bulk endpoints, history, calendar fetch modal
 │   │   ├── oauth_routes.py     # OAuth flow (/callback BEFORE /{keyword})
@@ -291,9 +296,12 @@ docker compose logs -f
 
 ## Admin Panel
 
-Access at http://localhost:8000 (default: admin/changeme)
+Access at http://localhost:8000
+
+Login requires a Google account. Only emails listed in `ADMIN_EMAILS` (comma-separated) in `.env` are allowed. Unauthorized emails see an Access Denied page.
 
 ### Features
+- **Google OAuth Login**: Secure authentication via Google — no passwords to manage
 - **Dashboard**: Stats cards, quick actions, scheduler config, job status checker, users overview with last run times
 - **Users**: Full CRUD with search/sort/filter, per-user action buttons, OAuth Setup + Revoke + Copy buttons, token expiry badges (Ready/Expiring/Expired), history button, bulk selection checkboxes
 - **Bulk Actions**: Select multiple users → trigger email/WhatsApp/revoke tokens for all selected
@@ -333,11 +341,13 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 | `EMAIL_HOST_USER` | SMTP fallback username | - |
 | `EMAIL_HOST_PASSWORD` | SMTP fallback password | - |
 | `OAUTH_CALLBACK_URL` | OAuth callback URL (must end with `/oauth/callback`, NOT just `/callback`) | http://localhost:8000/oauth/callback |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID (from GCP Console) | - |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | - |
+| `GOOGLE_REDIRECT_URI` | Admin login OAuth callback URL | http://localhost:8000/admin/auth/callback |
+| `ADMIN_EMAILS` | Comma-separated list of allowed admin emails | - |
 | `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
 | `WAHA_API_KEY` | WAHA API key | - |
 | `WAHA_SESSION` | WAHA session name | default |
-| `ADMIN_USERNAME` | Admin panel username | admin |
-| `ADMIN_PASSWORD` | Admin panel password | changeme |
 | `SECRET_KEY` | Session secret key | - |
 | `ADMIN_PORT` | Admin panel port | 8000 |
 
@@ -417,10 +427,17 @@ uv run python -m modules.fetch_emails setup <keyword>
 - Ensure Google Cloud Console redirect URI matches exactly: `http://localhost:8000/oauth/callback`
 - Ensure Google Cloud Console JS origin includes: `http://localhost:8000`
 
+### Admin login fails / Access Denied
+- Ensure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set in `.env` (same credentials as your GCP OAuth app)
+- Ensure `ADMIN_EMAILS` contains the Google account email you're trying to login with
+- Ensure `GOOGLE_REDIRECT_URI` matches the redirect URI registered in GCP Console: `http://localhost:8000/admin/auth/callback`
+- The GCP OAuth consent screen must be configured (even for testing) — set your email as a test user
+
 ## Tech Stack
 
 - **Task Queue**: Huey (Redis-backed)
 - **Admin Panel**: FastAPI + Jinja2 + Bootstrap 5
+- **Admin Auth**: Google OAuth (PKCE + Redis state) via httpx
 - **Gmail API**: google-api-python-client
 - **Calendar API**: google-api-python-client
 - **LLM**: LangChain (NVIDIA, OpenAI, Groq, OpenRouter, Google)

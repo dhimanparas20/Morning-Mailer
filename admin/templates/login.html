@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Login - Morning Mailer{% endblock %}
 {% block navbar %}{% endblock %}
-{% block content %}
-<div class="login-wrapper" style="margin:-1.5rem calc(-1 * var(--bs-container-padding));min-height:calc(100vh - 56px);">
-    <div class="login-card p-5" style="width: 100%; max-width: 420px;">
+{% block main_wrapper %}
+<div class="login-wrapper">
+    <div class="login-card p-5">
         <div class="text-center mb-4">
             <div class="login-icon">
                 <i class="bi bi-envelope-fill"></i>
@@ -14,39 +14,34 @@
 
         {% if error %}
         <div class="alert alert-danger py-2 px-3 mb-3" role="alert">
-            <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error }}
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            {% if error == "oauth_not_configured" %}
+                Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env.
+            {% elif error == "auth_failed" %}
+                Authentication failed. Please try again.
+            {% elif error == "no_user_info" %}
+                Could not retrieve your information from Google.
+            {% else %}
+                {{ error }}
+            {% endif %}
         </div>
         {% endif %}
 
-        <form method="POST" action="/login">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="login-body">
+            <a href="/admin/auth/login" class="btn-google-login" role="button">
+                <svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M19.6 10.23c0-.68-.06-1.36-.17-2.01H10v3.8h5.38a4.6 4.6 0 01-2 3.02v2.5h3.24c1.89-1.74 2.98-4.3 2.98-7.31z" fill="#4285F4"/>
+                    <path d="M10 20c2.7 0 4.96-.9 6.62-2.42l-3.24-2.5c-.9.6-2.04.95-3.38.95-2.6 0-4.8-1.76-5.58-4.12H1.08v2.58A9.99 9.99 0 0010 20z" fill="#34A853"/>
+                    <path d="M4.42 11.91A6.01 6.01 0 014.1 10c0-.67.12-1.31.32-1.91V5.51H1.08A9.99 9.99 0 000 10c0 1.61.39 3.14 1.08 4.49l3.34-2.58z" fill="#FBBC05"/>
+                    <path d="M10 3.98c1.47 0 2.78.5 3.82 1.5l2.86-2.86C14.96.99 12.7 0 10 0A9.99 9.99 0 001.08 5.51l3.34 2.58C5.2 5.74 7.4 3.98 10 3.98z" fill="#EA4335"/>
+                </svg>
+                Sign in with Google
+            </a>
 
-            <div class="mb-3">
-                <label class="form-label">Username</label>
-                <div class="input-group">
-                    <span class="input-group-text" style="background:rgba(139,92,246,0.1);border-color:rgba(139,92,246,0.15);color:#a78bfa;border-radius:12px 0 0 12px;">
-                        <i class="bi bi-person"></i>
-                    </span>
-                    <input type="text" name="username" class="form-control" placeholder="admin" required autofocus
-                           style="border-radius:0 12px 12px 0;">
-                </div>
+            <div class="login-divider">
+                <span>Secured by Google OAuth 2.0</span>
             </div>
-
-            <div class="mb-4">
-                <label class="form-label">Password</label>
-                <div class="input-group">
-                    <span class="input-group-text" style="background:rgba(139,92,246,0.1);border-color:rgba(139,92,246,0.15);color:#a78bfa;border-radius:12px 0 0 12px;">
-                        <i class="bi bi-lock"></i>
-                    </span>
-                    <input type="password" name="password" class="form-control" placeholder="Password" required
-                           style="border-radius:0 12px 12px 0;">
-                </div>
-            </div>
-
-            <button type="submit" class="btn btn-primary w-100">
-                <i class="bi bi-box-arrow-in-right me-1"></i> Sign In
-            </button>
-        </form>
+        </div>
 
         <div class="text-center mt-4">
             <small class="text-muted">Powered by AI &middot; Secure Access</small>

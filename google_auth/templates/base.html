@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}{{ project_name }}{% endblock %}</title>
+
+    <link rel="stylesheet" href="{{ url_for('static', path='css/tokens.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='css/base.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='css/themes.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='css/layout.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', path='css/components.css') }}" />
+
+    {% block styles %}{% endblock %}
+
+    <script>
+      (function () {
+        var saved = localStorage.getItem("preferred-theme");
+        var theme = saved === "light" || saved === "dark" ? saved : "dark";
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+  </head>
+  <body>
+    {% include "partials/navbar.html" %}
+
+    <main id="main-content">
+      {% block content %}{% endblock %}
+    </main>
+
+    {% include "partials/footer.html" %}
+
+    <script src="{{ url_for('static', path='js/theme.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/app.js') }}" defer></script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

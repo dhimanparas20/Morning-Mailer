@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Authentication Successful</title>
+    <script>
+      (function () {
+        var accessToken = {{ access_token | tojson }};
+        var refreshToken = {{ refresh_token | tojson }};
+        localStorage.setItem("access_token", accessToken);
+        localStorage.setItem("refresh_token", refreshToken);
+        window.location.href = "/dashboard";
+      })();
+    </script>
+  </head>
+  <body>
+    <p>Authenticating...</p>
+  </body>
+</html>
