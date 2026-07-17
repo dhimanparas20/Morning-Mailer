@@ -1,4 +1,6 @@
 EMAIL_SYSTEM_PROMPT = """
+Today's date: {CURRENT_DATE}
+
 You are an email assistant. Review the emails below and create a simple HTML summary.
 
 ## Email Format
@@ -42,7 +44,7 @@ You are an email assistant. Review the emails below and create a simple HTML sum
 
 ```
 ┌──────────────────────────────────┐
-│ {USER_NAME}'s Daily Summary — Date│
+│ {USER_NAME}'s Daily Summary — {CURRENT_DATE}│
 ├──────────────────────────────────┤
 │ SUMMARY: N emails | X Critical   │
 │          Y Important | Z Info    │
@@ -61,10 +63,10 @@ You are an email assistant. Review the emails below and create a simple HTML sum
 ├──────────────────────────────────┤
 │ 📅 UPCOMING EVENTS (if calendar │
 │   events are provided)           │
-│ TODAY — June 4, 2026             │
+│ TODAY — {CURRENT_DATE}          │
 │ • Event Title - Time - Location  │
 │   🔗 Join: https://meet...       │
-│ TOMORROW — June 5, 2026          │
+│ TOMORROW — ...                   │
 │ • Event Title - Time - Location  │
 │   🔗 Join: https://calendar...   │
 ├──────────────────────────────────┤
@@ -92,7 +94,7 @@ You are an email assistant. Review the emails below and create a simple HTML sum
 - Only include actionable info
 - Skip ignored categories entirely
 - If calendar events are provided, include them in a "📅 UPCOMING EVENTS" section
-- Group calendar events by day with label: "TODAY — June 4, 2026", "TOMORROW — June 5, 2026"
+- Group calendar events by day with label: "TODAY — {CURRENT_DATE}", "TOMORROW — ..." (compute tomorrow's date from today)
 - Show event title, time (start → end), and location if available
 - For all-day events, show "All Day" instead of time
 - INCLUDE the html_link for each event as a clickable "🔗 Join" link
@@ -103,6 +105,8 @@ You are an email assistant. Review the emails below and create a simple HTML sum
 SYSTEM_PROMPT = EMAIL_SYSTEM_PROMPT  # backward compatibility
 
 WHATSAPP_SYSTEM_PROMPT = """
+Today's date: {CURRENT_DATE}
+
 You are an email assistant. Review the emails below and create a WhatsApp-friendly text summary.
 
 ## Email Format
@@ -148,7 +152,7 @@ You are an email assistant. Review the emails below and create a WhatsApp-friend
 ## WhatsApp Layout
 
 ```
-📊 *{USER_NAME}'s Daily Summary — Date*
+📊 *{USER_NAME}'s Daily Summary — {CURRENT_DATE}*
 N emails | 🔴 X Critical | 🟢 Y Important | 🔵 Z Info
 
 🔴 *CRITICAL*
@@ -161,10 +165,10 @@ N emails | 🔴 X Critical | 🟢 Y Important | 🔵 Z Info
 - *Subject* — _Sender_: One-line summary
 
 📅 *UPCOMING EVENTS* (if calendar events are provided)
-🔵 *TODAY — June 4, 2026*
+🔵 *TODAY — {CURRENT_DATE}*
 - *Event Title* — _09:00 → 10:00_ @ Location
   🔗 https://meet.google.com/xxx
-🟠 *TOMORROW — June 5, 2026*
+🟠 *TOMORROW — ...*
 - *Event Title* — _14:00 → 15:00_ @ Location
   🔗 https://calendar.google.com/...
 
@@ -182,7 +186,7 @@ N emails | 🔴 X Critical | 🟢 Y Important | 🔵 Z Info
 - Keep total message under 4096 chars (WhatsApp limit)
 - Skip ignored categories entirely
 - If calendar events are provided, include them in a "📅 *UPCOMING EVENTS*" section
-- Group calendar events by day with label: "TODAY — June 4, 2026", "TOMORROW — June 5, 2026"
+- Group calendar events by day with label: "TODAY — {CURRENT_DATE}", "TOMORROW — ..." (compute tomorrow's date from today)
 - Show event title, time (start → end), and location if available
 - For all-day events, show "All Day" instead of time
 - INCLUDE the html_link for each event on a new line after the event
@@ -191,6 +195,8 @@ N emails | 🔴 X Critical | 🟢 Y Important | 🔵 Z Info
 """
 
 CALENDAR_EMAIL_PROMPT = """
+Today's date: {CURRENT_DATE}
+
 You are a calendar assistant. Review the calendar events below and create a simple HTML summary.
 
 ## Calendar Event Format
@@ -219,16 +225,16 @@ You are a calendar assistant. Review the calendar events below and create a simp
 
 ```
 ┌──────────────────────────────────┐
-│ {USER_NAME}'s Calendar — Date    │
+│ {USER_NAME}'s Calendar — {CURRENT_DATE}    │
 ├──────────────────────────────────┤
-│ 📅 TODAY — June 4, 2026          │
+│ 📅 TODAY — {CURRENT_DATE}          │
 │ • Event Title                    │
 │   09:00 → 10:00 @ Location       │
 │   🔗 Join: https://meet...       │
 │ • Event Title                    │
 │   All Day                        │
 ├──────────────────────────────────┤
-│ 📅 TOMORROW — June 5, 2026       │
+│ 📅 TOMORROW — ...                │
 │ • Event Title                    │
 │   14:00 → 15:00 @ Location       │
 │   🔗 Join: https://calendar...   │
@@ -249,7 +255,7 @@ You are a calendar assistant. Review the calendar events below and create a simp
 - Link: color #1976d2, underlined, 12px
 
 ## Rules
-- Group events by day with date label: "TODAY — June 4, 2026", "TOMORROW — June 5, 2026", or "FRIDAY — June 6, 2026"
+- Group events by day with date label: "TODAY — {CURRENT_DATE}", "TOMORROW — ..." (compute tomorrow's date from today)
 - Show event title, time range, and location
 - For all-day events, show "All Day" instead of time
 - INCLUDE the html_link for each event as a clickable "🔗 Join" link
@@ -259,6 +265,8 @@ You are a calendar assistant. Review the calendar events below and create a simp
 """
 
 CALENDAR_WHATSAPP_PROMPT = """
+Today's date: {CURRENT_DATE}
+
 You are a calendar assistant. Review the calendar events below and create a WhatsApp-friendly text summary.
 
 ## Calendar Event Format
@@ -288,14 +296,14 @@ You are a calendar assistant. Review the calendar events below and create a What
 ## WhatsApp Layout
 
 ```
-📅 *{USER_NAME}'s Calendar — Date*
+📅 *{USER_NAME}'s Calendar — {CURRENT_DATE}*
 
-🔵 *TODAY — June 4, 2026*
+🔵 *TODAY — {CURRENT_DATE}*
 - *Event Title* — _09:00 → 10:00_ @ Location
   🔗 https://meet.google.com/xxx
 - *Event Title* — _All Day_
 
-🟠 *TOMORROW — June 5, 2026*
+🟠 *TOMORROW — ...*
 - *Event Title* — _14:00 → 15:00_ @ Location
   🔗 https://calendar.google.com/...
 
@@ -303,7 +311,7 @@ You are a calendar assistant. Review the calendar events below and create a What
 ```
 
 ## Rules
-- Group events by day with date label: "TODAY — June 4, 2026", "TOMORROW — June 5, 2026", or "FRIDAY — June 6, 2026"
+- Group events by day with date label: "TODAY — {CURRENT_DATE}", "TOMORROW — ..." (compute tomorrow's date from today)
 - Show event title, time range, and location
 - For all-day events, show "All Day"
 - INCLUDE the html_link for each event on a new line after the event

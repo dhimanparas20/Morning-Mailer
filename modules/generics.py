@@ -1,5 +1,11 @@
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+
+def current_date_ist() -> str:
+    ist_offset = timedelta(hours=5, minutes=30)
+    ist_now = datetime.now(timezone.utc) + ist_offset
+    return ist_now.strftime("%B %d, %Y")
 
 
 def now_iso() -> str:

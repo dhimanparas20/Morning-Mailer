@@ -5,6 +5,7 @@ from typing import Any, Literal, Optional
 
 from modules import get_logger
 from modules.agent_utils import create_llm
+from modules.generics import current_date_ist
 from modules.prompt import SYSTEM_PROMPT
 
 load_dotenv()
@@ -54,6 +55,7 @@ class AgentModule:
             prompt = SYSTEM_PROMPT
         if user_name:
             prompt = prompt.replace("{USER_NAME}", user_name)
+        prompt = prompt.replace("{CURRENT_DATE}", current_date_ist())
 
         user_message = f"{prompt}\n\nHere are the emails to summarize:\n\n{email_json}"
 
