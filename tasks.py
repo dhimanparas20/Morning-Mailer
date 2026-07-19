@@ -464,6 +464,8 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
             calendar_events = cal_result.get("events", [])
             logger.info(f"[{keyword}] Fetched {len(calendar_events)} calendar events")
 
+    user_schedule = user.get("schedule_time", global_schedule_time)
+
     if result["success"] and result["emails"]:
         summary = summarize_emails(result["emails"], user_name=user_name, calendar_events=calendar_events)
 
@@ -479,15 +481,15 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
             keyword=keyword,
         )
 
-        now = datetime.now()
-        user_schedule = user.get("schedule_time", global_schedule_time)
-        set_user_last_run_date(keyword, now.strftime("%Y-%m-%d"), user_schedule)
-
         try:
             from admin.services import record_history
             record_history(keyword, "email", "sent", email_count=len(result["emails"]))
         except Exception:
             pass
+
+    # Always mark as run to prevent re-processing on every scheduler tick
+    now = datetime.now()
+    set_user_last_run_date(keyword, now.strftime("%Y-%m-%d"), user_schedule)
 
     audit_log("process_user", keyword, "success" if result.get("success") else "skipped",
               f"emails_fetched={emails_fetched}, calendar_events={len(calendar_events)}")
@@ -533,10 +535,16 @@ def _process_user_both_channels(
             calendar_events = cal_result.get("events", [])
             logger.info(f"[{keyword}] Fetched {len(calendar_events)} calendar events")
 
-    if not result["success"] or not result["emails"]:
-        return {"keyword": keyword, "name": user_name, "emails_fetched": 0, "calendar_events": len(calendar_events)}
-
     user_schedule = user.get("schedule_time", global_schedule_time)
+
+    if not result["success"] or not result["emails"]:
+        # Still mark as run to prevent re-processing on every scheduler tick
+        if needs_email:
+            set_user_last_run_date(keyword, today_str, user_schedule)
+        if needs_whatsapp:
+            redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
+            redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user_schedule)
+        return {"keyword": keyword, "name": user_name, "emails_fetched": 0, "calendar_events": len(calendar_events)}
 
     if needs_email:
         try:
