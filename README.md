@@ -9,8 +9,9 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 2. **Fetches** emails from Gmail (past N days per user) in parallel
 3. **Fetches** Google Calendar events if enabled per user
 4. **Categorizes** them: Critical, Important, Informational, or Ignored
-5. **Summarizes** using AI into HTML (email) or plain-text (WhatsApp)
-6. **Delivers** via SMTP email and/or WhatsApp (WAHA) per user preference
+5. **Classifies** calendar events into types: 🎂 Birthday, 📅 Meeting, 🎉 Event, 🎊 Festival, 🏛️ Public Holiday
+6. **Summarizes** using AI into rich HTML (email) or plain-text (WhatsApp) with dashboard-style At a Glance cards, inbox mood gauge, top priority, action items, thread grouping, and day overview with gap indicators and free slots
+7. **Delivers** via SMTP email and/or WhatsApp (WAHA) per user preference
 
 ## Architecture
 
@@ -60,6 +61,9 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - **CSV Export**: Download all users as CSV via Users page
 - **JSON Import/Export**: Import users by uploading a JSON file, or export current users as JSON download
 - **Audit Logs**: Full task-level audit trail stored in Redis (60-day TTL), viewable with search/filter/sort in the Logs admin page
+- **Rich Email Summaries**: Dashboard-style At a Glance with 4 stat cards, inbox mood gauge (🟢 Calm/🟡 Busy/🔴 Urgent), Today's Top Priority, Action Items from email bodies, and thread-grouped Important section
+- **Calendar Event Classification**: Events classified into 5 types with emoji icons — 🎂 Birthday, 📅 Meeting, 🎉 Event, 🎊 Festival, 🏛️ Public Holiday. 🔗 Join links only for meetings
+- **Day Overview with Pace Rating**: Calendar summaries include a 3-card day overview (today events / next days / pace badge), attendee display for meetings, ⏰ gap indicators between events, and ⏳ Free Slots section with suggested use
 - **Per-User History**: Track email/WhatsApp sends in Redis, viewable per user
 - **Token Expiry Alerts**: Badges showing token health (Ready/Expiring/Expired) in users table
 - **Job Status Checker**: Paste a task ID to check its status on the dashboard
@@ -112,6 +116,9 @@ GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret
 GOOGLE_REDIRECT_URI=http://localhost:8000/admin/auth/callback
 ADMIN_EMAILS=dhimanparas20@gmail.com
+JWT_SECRET_KEY=change-this-to-a-random-jwt-secret
+JWT_EXPIRE_MINUTES=60
+APP_BASE_URL=http://127.0.0.1:8000
 SECRET_KEY=change-this-to-a-random-secret-key
 ADMIN_PORT=8000
 
@@ -235,7 +242,7 @@ Morning-Mailer/
 │   ├── fetch_calendar.py       # Google Calendar API (shares tokens with Gmail)
 │   ├── agent_mod.py            # LLM wrapper (summarize_emails)
 │   ├── agent_utils.py          # LLM factory (MODEL_REGISTRY)
-│   ├── prompt.py               # Prompt templates (email + WhatsApp + calendar)
+│   ├── prompt.py               # Rich prompt templates: dashboard-style At a Glance, inbox mood gauge, event type classification (birthday/meeting/festival/etc.), action items, thread grouping, day overview with pace rating, free slots, and insights
 │   ├── logger.py               # Logging (get_logger)
 │   ├── generics.py             # Utilities
 │   ├── redis_users.py          # Redis user storage & CRUD
@@ -345,6 +352,9 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | - |
 | `GOOGLE_REDIRECT_URI` | Admin login OAuth callback URL | http://localhost:8000/admin/auth/callback |
 | `ADMIN_EMAILS` | Comma-separated list of allowed admin emails | - |
+| `JWT_SECRET_KEY` | Secret for signing JWT tokens | - |
+| `JWT_EXPIRE_MINUTES` | JWT token expiration | 60 |
+| `APP_BASE_URL` | Application base URL | http://127.0.0.1:8000 |
 | `WAHA_API_URL` | WAHA server URL | http://waha:3000 |
 | `WAHA_API_KEY` | WAHA API key | - |
 | `WAHA_SESSION` | WAHA session name | default |
@@ -357,6 +367,7 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 - For each user, checks if current time >= user's schedule_time
 - If yes and hasn't run today → processes that user in parallel
 - Users without schedule_time use global SCHEDULE_TIME from .env
+- `last_run` is always set in Redis even when fetch returns 0 emails — prevents re-processing the same empty window
 
 ### Environment Modes (`ENV_MODE`)
 

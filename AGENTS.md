@@ -64,7 +64,8 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `should_run_today(user, global_schedule_time, redis_prefix="")`: Checks if user's schedule time has passed today
   - `fetch_emails_with_retry(keyword, max_results, days_threshold)`: Fetches with retry logic
   - `fetch_calendar_events_with_retry(keyword, days, max_results)`: Calendar fetch with retry
-  - `process_user(user, global_schedule_time)`: Full pipeline for one user (email)
+  - `process_user(user, global_schedule_time)`: Full pipeline for one user (email). Always sets `last_run` in Redis even when no emails are fetched — prevents infinite re-processing.
+  - `_process_user_both_channels(user, global_schedule_time)`: Handles combined email + WhatsApp for a user. Sets `last_run` in the no-emails early-return path (same re-processing prevention).
   - `send_email(to, subject, body, is_html, smtp_user, smtp_password)`: Sends via SMTP
   - `send_whatsapp(mobile, text)`: Sends WhatsApp via WAHA API
 
@@ -87,6 +88,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - For each user, checks if current time >= user's schedule_time
   - Email tracking key: `morning_mailer:last_run:<keyword>`
   - WhatsApp tracking key: `morning_mailer:whatsapp_last_run:<keyword>`
+  - `process_user` and `_process_user_both_channels` both **always set `last_run`** even when fetch returns 0 emails — prevents re-processing the same empty window
 
 ### 2. admin/ - FastAPI Admin Panel
 
@@ -291,11 +293,12 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 
 ### 10. modules/prompt.py - Prompt Templates
 - **Variables**:
-  - `EMAIL_SYSTEM_PROMPT`: HTML summary format with inline CSS
-  - `WHATSAPP_SYSTEM_PROMPT`: Plain-text WhatsApp format with *bold*, _italic_, emoji markers
-  - `CALENDAR_EMAIL_PROMPT`: Calendar events → HTML email format
-  - `CALENDAR_WHATSAPP_PROMPT`: Calendar events → WhatsApp format
+  - `EMAIL_SYSTEM_PROMPT`: Rich HTML email summary with dashboard-style "📊 At a Glance" (4 stat cards in a single flex row: Total/Critical/Important/Info), inbox mood gauge (🟢 Calm/🟡 Busy/🔴 Urgent), "🎯 Today's Top Priority" pick, "📋 Action Items" extracted from email bodies, thread-grouped Important section, calendar events classified by type with links only for meetings, and "💡 Key Insight" closing line.
+  - `WHATSAPP_SYSTEM_PROMPT`: Plain-text WhatsApp version of the same structure using *bold* (subjects/headers) and _italic_ (senders). Same features: mood, priority, action items, threading, calendar events with type classification, free slots, and insight.
+  - `CALENDAR_EMAIL_PROMPT`: Calendar-specific HTML with 3-card "Day Overview" (today events / next days / pace badge 🔴 Packed/🟠 Moderate/🟢 Light), event type classification, attendee display for meetings, ⏰ gap indicators, "⏳ Free Slots" section, and "💡 Tip".
+  - `CALENDAR_WHATSAPP_PROMPT`: Plain-text WhatsApp version of calendar summary with same event classification, gap indicators, free slots, and tip.
   - `SYSTEM_PROMPT`: Backward-compat alias for EMAIL_SYSTEM_PROMPT
+- **Event Classification**: All prompts classify calendar events into 5 types with emoji: 🎂 Birthday, 📅 Meeting, 🎉 Event, 🎊 Festival, 🏛️ Public Holiday. 🔗 Join links are only rendered for Meeting-type events — never for birthdays, holidays, or non-meeting events.
 - **Placeholder Replacement**: Two placeholders are replaced at runtime in `summarize_emails()`:
   - `{USER_NAME}` → user's display name
   - `{CURRENT_DATE}` → `current_date_ist()` from `modules.generics` (returns IST date like "July 17, 2026")
@@ -844,8 +847,10 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 
 17. **Force tasks and last_run race condition**: `huey_force_whatsapp_all` and `huey_force_email_all` no longer delete `last_run` keys at the start (which created a race window where `daily_summary()` could also process the same user). Instead, force tasks set the complementary channel's `last_run` key after processing — e.g., `huey_force_whatsapp_all` also sets `morning_mailer:last_run:<keyword>` to prevent `daily_summary` from re-processing for email. This means forcing one channel fulfills both for the day's scheduled run.
 
-18. **`ipython_startup.py` must use `get_agent()` not `AGENT`**: The `AGENT` variable in `tasks.py` is `None` at module level — only `get_agent()` initializes it lazily. All IPython magic functions must import `get_agent` and call `get_agent().summarize_emails(...)` instead of importing `AGENT` directly, or they'll hit `AttributeError: 'NoneType' object has no attribute 'summarize_emails'`.
+18. **`process_user`/`_process_user_both_channels` always sets `last_run` even on empty fetch**: Both functions update the `last_run` Redis key regardless of whether emails were actually fetched. This prevents infinite re-processing when a user has no new emails but their schedule time has passed. Without this, the scheduler would re-process on every check interval tick. Do NOT move `set_user_last_run_date` into the success-only branch.
 
-19. **Admin OAuth uses PKCE + Redis state (not SessionMiddleware)**: The admin login flow does NOT use authlib's `authorize_redirect`/`authorize_access_token` (which depend on `SessionMiddleware`). Instead, it manually generates PKCE challenges, saves state + code_verifier to Redis, and exchanges codes via `httpx`. This avoids cookie conflicts between `SessionMiddleware`'s `session` cookie and our Redis-backed `session_token` cookie. Do NOT re-add `SessionMiddleware` to `main.py`.
+19. **`ipython_startup.py` must use `get_agent()` not `AGENT`**: The `AGENT` variable in `tasks.py` is `None` at module level — only `get_agent()` initializes it lazily. All IPython magic functions must import `get_agent` and call `get_agent().summarize_emails(...)` instead of importing `AGENT` directly, or they'll hit `AttributeError: 'NoneType' object has no attribute 'summarize_emails'`.
 
-20. **Two separate OAuth callback paths**: `/admin/auth/callback` (admin login) and `/oauth/callback` (per-user Gmail/Calendar tokens) are different routes. They share the same GCP OAuth app credentials but serve different purposes. Both must be registered as redirect URIs in GCP Console.
+20. **Admin OAuth uses PKCE + Redis state (not SessionMiddleware)**: The admin login flow does NOT use authlib's `authorize_redirect`/`authorize_access_token` (which depend on `SessionMiddleware`). Instead, it manually generates PKCE challenges, saves state + code_verifier to Redis, and exchanges codes via `httpx`. This avoids cookie conflicts between `SessionMiddleware`'s `session` cookie and our Redis-backed `session_token` cookie. Do NOT re-add `SessionMiddleware` to `main.py`.
+
+21. **Two separate OAuth callback paths**: `/admin/auth/callback` (admin login) and `/oauth/callback` (per-user Gmail/Calendar tokens) are different routes. They share the same GCP OAuth app credentials but serve different purposes. Both must be registered as redirect URIs in GCP Console.
