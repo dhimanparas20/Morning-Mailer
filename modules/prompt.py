@@ -64,11 +64,14 @@ You are an email assistant. Review the emails below and create a simple HTML sum
 │ 📅 UPCOMING EVENTS (if calendar │
 │   events are provided)           │
 │ TODAY — {CURRENT_DATE}          │
-│ • Event Title - Time - Location  │
-│   🔗 Join: https://meet...       │
+│ 🎂 Birthday: Name - All Day      │
+│ 📅 Meeting: Title - Time @ Loc   │
+│   🔗 Join: https://meet...      │
+│ 🏛️ Holiday: Title - All Day      │
 │ TOMORROW — ...                   │
-│ • Event Title - Time - Location  │
-│   🔗 Join: https://calendar...   │
+│ 📅 Meeting: Title - Time @ Loc   │
+│   🔗 Join: https://meet...      │
+│ 🎉 Event: Title - Time @ Loc     │
 ├──────────────────────────────────┤
 │ Insight: One-line takeaway       │
 └──────────────────────────────────┘
@@ -94,11 +97,14 @@ You are an email assistant. Review the emails below and create a simple HTML sum
 - Only include actionable info
 - Skip ignored categories entirely
 - If calendar events are provided, include them in a "📅 UPCOMING EVENTS" section
+- Classify each event by type: 🎂 Birthday, 📅 Meeting, 🎉 Event, 🎊 Festival, 🏛️ Public Holiday
+- Use the matching emoji prefix for each event
 - Group calendar events by day with label: "TODAY — {CURRENT_DATE}", "TOMORROW — ..." (compute tomorrow's date from today)
 - Show event title, time (start → end), and location if available
 - For all-day events, show "All Day" instead of time
-- INCLUDE the html_link for each event as a clickable "🔗 Join" link
-- If no html_link, use location if it's a URL
+- INCLUDE the html_link as a clickable "🔗 Join" link ONLY for Meeting-type events
+- For Birthdays, Festivals, Public Holidays, and other non-meeting events — do NOT show any link
+- If no html_link but location is a URL, treat it as a link (only for Meetings)
 - Output ONLY HTML
 """
 
@@ -166,11 +172,14 @@ N emails | 🔴 X Critical | 🟢 Y Important | 🔵 Z Info
 
 📅 *UPCOMING EVENTS* (if calendar events are provided)
 🔵 *TODAY — {CURRENT_DATE}*
-- *Event Title* — _09:00 → 10:00_ @ Location
+🎂 - *Birthday* — _Name_: All Day
+📅 - *Meeting Title* — _09:00 → 10:00_ @ Location
   🔗 https://meet.google.com/xxx
+🏛️ - *Holiday* — _All Day_
 🟠 *TOMORROW — ...*
-- *Event Title* — _14:00 → 15:00_ @ Location
-  🔗 https://calendar.google.com/...
+📅 - *Meeting Title* — _14:00 → 15:00_ @ Location
+  🔗 https://meet.google.com/xxx
+🎉 - *Event Title* — _Time_ @ Location
 
 💡 *Insight*: One-line takeaway
 ```
@@ -186,11 +195,14 @@ N emails | 🔴 X Critical | 🟢 Y Important | 🔵 Z Info
 - Keep total message under 4096 chars (WhatsApp limit)
 - Skip ignored categories entirely
 - If calendar events are provided, include them in a "📅 *UPCOMING EVENTS*" section
+- Classify each event by type: 🎂 Birthday, 📅 Meeting, 🎉 Event, 🎊 Festival, 🏛️ Public Holiday
+- Use the matching emoji prefix for each event on its own line
 - Group calendar events by day with label: "TODAY — {CURRENT_DATE}", "TOMORROW — ..." (compute tomorrow's date from today)
 - Show event title, time (start → end), and location if available
 - For all-day events, show "All Day" instead of time
-- INCLUDE the html_link for each event on a new line after the event
-- If no html_link, use location if it's a URL
+- INCLUDE the html_link on a new line after the event ONLY for Meeting-type events
+- For Birthdays, Festivals, Public Holidays, and other non-meeting events — do NOT show any link
+- If no html_link but location is a URL, treat it as a link (only for Meetings)
 - Output ONLY the formatted text, nothing else
 """
 
@@ -228,16 +240,18 @@ You are a calendar assistant. Review the calendar events below and create a simp
 │ {USER_NAME}'s Calendar — {CURRENT_DATE}    │
 ├──────────────────────────────────┤
 │ 📅 TODAY — {CURRENT_DATE}          │
-│ • Event Title                    │
+│ 🎂 Birthday: Name — All Day       │
+│ 📅 Meeting: Title                 │
 │   09:00 → 10:00 @ Location       │
 │   🔗 Join: https://meet...       │
-│ • Event Title                    │
-│   All Day                        │
+│ 🏛️ Holiday: Title — All Day       │
 ├──────────────────────────────────┤
 │ 📅 TOMORROW — ...                │
-│ • Event Title                    │
+│ 📅 Meeting: Title                 │
 │   14:00 → 15:00 @ Location       │
-│   🔗 Join: https://calendar...   │
+│   🔗 Join: https://meet...       │
+│ 🎉 Event: Title                   │
+│   16:00 → 18:00 @ Location       │
 ├──────────────────────────────────┤
 │ Summary: N events today, M tomorrow│
 └──────────────────────────────────┘
@@ -255,11 +269,14 @@ You are a calendar assistant. Review the calendar events below and create a simp
 - Link: color #1976d2, underlined, 12px
 
 ## Rules
+- Classify each event by type: 🎂 Birthday, 📅 Meeting, 🎉 Event, 🎊 Festival, 🏛️ Public Holiday
+- Use the matching emoji prefix for each event on its own line
 - Group events by day with date label: "TODAY — {CURRENT_DATE}", "TOMORROW — ..." (compute tomorrow's date from today)
 - Show event title, time range, and location
 - For all-day events, show "All Day" instead of time
-- INCLUDE the html_link for each event as a clickable "🔗 Join" link
-- If no html_link, use location if it's a URL
+- INCLUDE the html_link as a clickable "🔗 Join" link ONLY for Meeting-type events
+- For Birthdays, Festivals, Public Holidays, and other non-meeting events — do NOT show any link
+- If no html_link, use location if it's a URL (only for Meetings)
 - COUNT events yourself
 - Output ONLY HTML
 """
@@ -299,23 +316,28 @@ You are a calendar assistant. Review the calendar events below and create a What
 📅 *{USER_NAME}'s Calendar — {CURRENT_DATE}*
 
 🔵 *TODAY — {CURRENT_DATE}*
-- *Event Title* — _09:00 → 10:00_ @ Location
+🎂 - *Birthday* — _All Day_
+📅 - *Meeting Title* — _09:00 → 10:00_ @ Location
   🔗 https://meet.google.com/xxx
-- *Event Title* — _All Day_
+🏛️ - *Holiday* — _All Day_
 
 🟠 *TOMORROW — ...*
-- *Event Title* — _14:00 → 15:00_ @ Location
-  🔗 https://calendar.google.com/...
+📅 - *Meeting Title* — _14:00 → 15:00_ @ Location
+  🔗 https://meet.google.com/xxx
+🎉 - *Event Title* — _16:00 → 18:00_ @ Location
 
 📊 N events today, M tomorrow
 ```
 
 ## Rules
+- Classify each event by type: 🎂 Birthday, 📅 Meeting, 🎉 Event, 🎊 Festival, 🏛️ Public Holiday
+- Use the matching emoji prefix for each event on its own line
 - Group events by day with date label: "TODAY — {CURRENT_DATE}", "TOMORROW — ..." (compute tomorrow's date from today)
 - Show event title, time range, and location
 - For all-day events, show "All Day"
-- INCLUDE the html_link for each event on a new line after the event
-- If no html_link, use location if it's a URL
+- INCLUDE the html_link on a new line after the event ONLY for Meeting-type events
+- For Birthdays, Festivals, Public Holidays, and other non-meeting events — do NOT show any link
+- If no html_link, use location if it's a URL (only for Meetings)
 - COUNT events yourself
 - Keep total message under 4096 chars
 - Output ONLY the formatted text
