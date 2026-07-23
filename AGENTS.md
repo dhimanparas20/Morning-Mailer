@@ -159,10 +159,14 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 | `auth_routes` | `/admin` | Google OAuth login, logout, access denied (PKCE + Redis state) |
 | `user_routes` | `/users` | User CRUD, search/sort, import/export |
 | `action_routes` | `/actions` | Trigger email/whatsapp/calendar actions, test send, model switch |
-| `oauth_routes` | `/oauth` | Per-user Gmail/Calendar OAuth start + callback |
+| `oauth_routes` | `/oauth` | Per-user Gmail/Calendar OAuth start + callback (rate-limited, keyword validation) |
 | `system_routes` | `/system` | Redis status, scheduler status, tokens status, audit log |
 
 **Important Route Ordering in oauth_routes.py**: `/callback` MUST be defined BEFORE `/{keyword}` otherwise FastAPI matches `callback` as a keyword. The `/callback` path is the fixed OAuth callback URL used by Google redirect.
+
+**OAuth Route Protections**:
+- `GET /oauth/{keyword}`: Rate-limited to 20 req/min per IP, validates keyword format (alphanumeric + underscore/hyphen, max 64 chars), checks user exists in database before generating OAuth URL
+- `GET /oauth/callback`: Rate-limited to 10 req/min per IP, validates keyword format from state parameter
 
 **User Form Routes**:
 - `GET /users/{keyword}/edit` — renders edit form, passes `success_msg` from `?updated=1` query param

@@ -408,6 +408,22 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 docker compose exec huey python -c "import redis; r = redis.from_url('redis://:testpass@valkey:6379/0'); print(r.ping())"
 ```
 
+## Security
+
+### OAuth Route Protections
+- **Rate Limiting**: OAuth routes are rate-limited to prevent abuse
+  - `/oauth/{keyword}`: 20 requests per minute per IP
+  - `/oauth/callback`: 10 requests per minute per IP
+- **Keyword Validation**: Only alphanumeric characters, underscores, and hyphens allowed (max 64 chars)
+- **User Existence Check**: OAuth flow only works for keywords that exist in the user database
+- **Third-Party Access**: OAuth routes are exempt from admin login, allowing remote token setup
+
+### Admin Panel Security
+- **Google OAuth Login**: Only emails listed in `ADMIN_EMAILS` can access the admin panel
+- **CSRF Protection**: All state-changing operations require CSRF tokens
+- **Session Management**: Redis-backed sessions with automatic expiration
+- **Security Headers**: X-Content-Type-Options, X-Frame-Options, CSP, HSTS
+
 ## Troubleshooting
 
 ### Admin panel not loading
