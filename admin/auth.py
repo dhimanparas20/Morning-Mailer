@@ -133,6 +133,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/admin/auth/logout",
         "/admin/auth/success",
         "/admin/access-denied",
+        "/oauth",
         "/static",
         "/favicon.ico",
     }

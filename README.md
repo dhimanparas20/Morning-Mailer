@@ -54,7 +54,8 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - **Per-Channel Toggle**: Enable/disable email (`use_email`) and WhatsApp (`use_whatsapp`) per user
 - **Calendar Integration**: Include Google Calendar events in summaries (`fetch_calendar` per-user toggle)
 - **Admin Panel**: Full web UI for managing users, triggering actions, monitoring status
-- **OAuth Setup**: Setup Google OAuth tokens through the browser (no CLI needed)
+- **OAuth Setup**: Setup Google OAuth tokens through the browser (no CLI needed), or share OAuth URL with third parties for remote token setup
+- **Token Management**: Revoke tokens per user, token expiry badges (Ready/Expiring/Expired) in users table
 - **Task Queue Architecture**: Admin panel enqueues tasks, huey container executes them asynchronously
 - **Bulk Actions**: Select multiple users with checkboxes, trigger email/WhatsApp/revoke in bulk
 - **Summary Templates**: Per-user custom prompt for email summarization (stored in Redis)
@@ -65,7 +66,7 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - **Calendar Event Classification**: Events classified into 5 types with emoji icons — 🎂 Birthday, 📅 Meeting, 🎉 Event, 🎊 Festival, 🏛️ Public Holiday. 🔗 Join links only for meetings
 - **Day Overview with Pace Rating**: Calendar summaries include a 3-card day overview (today events / next days / pace badge), attendee display for meetings, ⏰ gap indicators between events, and ⏳ Free Slots section with suggested use
 - **Per-User History**: Track email/WhatsApp sends in Redis, viewable per user
-- **Token Expiry Alerts**: Badges showing token health (Ready/Expiring/Expired) in users table
+- **Token Management**: Revoke tokens per user, token expiry badges (Ready/Expiring/Expired), Setup/Copy OAuth URL buttons for users without tokens
 - **Job Status Checker**: Paste a task ID to check its status on the dashboard
 - **Current Date in Prompts**: All LLM prompts include today's IST date via `{CURRENT_DATE}` placeholder — model never guesses the date
 
@@ -186,7 +187,15 @@ uv run python -m modules.fetch_emails setup <keyword>
 2. Click the "Setup" button next to a user without a token
 3. Complete Google OAuth flow — token is saved automatically
 
-#### Option C: IPython
+#### Option C: Share OAuth URL with third party
+1. Open http://localhost:8000/users
+2. Click the **Copy** button next to a user without a token to copy the OAuth URL
+3. Share the URL (e.g., `https://your-domain.com/oauth/keyword`) with the user
+4. They open the URL — no admin login required
+5. They complete Google OAuth with their own Google account
+6. Token is saved server-side automatically
+
+#### Option D: IPython
 ```bash
 docker compose exec huey uv run ipython
 %setup_oauth <keyword>
@@ -317,7 +326,7 @@ Login requires a Google account. Only emails listed in `ADMIN_EMAILS` (comma-sep
 - **Actions**: Trigger email/whatsapp summaries, force all, test send, calendar fetch — returns task ID with copy button
 - **Audit Logs**: Browse all task executions with filtering by task type, keyword, status, and free-text search. Pagination and auto-refresh included
 - **Job Status**: Paste a task ID to check its status (pending/finished/error)
-- **OAuth**: Setup OAuth tokens through the browser (click "Setup" → authorize → done)
+- **OAuth**: Setup OAuth tokens through the browser (click "Setup" → authorize → done), or share Copy URL with third parties for remote token setup (no admin login required)
 - **System**: Redis status, model switching, last-run clearing
 
 ### Architecture

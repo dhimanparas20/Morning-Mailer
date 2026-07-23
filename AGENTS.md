@@ -107,7 +107,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 #### 2.3 admin/auth.py - Authentication
 - Redis-backed sessions (`mm:session:` prefix) + CSRF (`mm:csrf:` prefix)
 - `AuthMiddleware` intercepts requests, checks session cookie (`session_token`)
-- `EXEMPT_PATHS = {"/admin/login", "/admin/auth/login", "/admin/auth/callback", "/admin/access-denied", "/static", "/favicon.ico", "/oauth/callback"}` — admin login paths MUST be exempt or OAuth flow breaks
+- `EXEMPT_PATHS = {"/admin/login", "/admin/auth/login", "/admin/auth/callback", "/admin/access-denied", "/static", "/favicon.ico", "/oauth"}` — admin login paths + `/oauth` (third-party OAuth) MUST be exempt or flows break
 - `_cleanup_expired()` — 5-minute TTL pruning for sessions/CSRF, called in `create_session()` and `generate_csrf_token()` to prevent memory leaks
 - `create_session(user_email, user_name, user_picture)` → creates Redis session, returns token
 - `validate_session(token)` → reads from Redis, returns session data or None
@@ -561,10 +561,11 @@ There are two distinct OAuth flows:
 
 #### Per-User Gmail/Calendar OAuth
 ```
-1. User clicks "Setup" button on users page
+1. User clicks "Setup" button on users page (or shares URL with third party)
            │
            ▼
 2. GET /oauth/{keyword}
+    └── AuthMiddleware EXEMPT for /oauth (no admin session required)
     └── services.generate_oauth_url(keyword)
         ├── Loads client_secret_web.json (or client_secret.json)
         ├── Uses OAUTH_CALLBACK_URL from .env
@@ -576,11 +577,11 @@ There are two distinct OAuth flows:
     └── Auto-redirects after 1.5s + shows manual "Open" button
            │
            ▼
-4. User authorizes on Google
+4. User authorizes on Google (third party can use their own Google account)
            │
            ▼
 5. Google redirects to /oauth/callback?state={keyword}&code={code}
-    └── AuthMiddleware EXEMPT for /oauth/callback (no session needed)
+    └── AuthMiddleware EXEMPT for /oauth (no session needed)
     └── Route /callback defined BEFORE /{keyword} to avoid matching as keyword="callback"
            │
            ▼
@@ -590,7 +591,7 @@ There are two distinct OAuth flows:
         └── Saves to gauth/tokens/token_{keyword}.json
            │
            ▼
-7. Renders oauth_result.html with success/failure
+7. Renders oauth_result.html with success/failure (no admin login required)
 ```
 
 ## Key Configuration
@@ -815,7 +816,7 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 
 3. **FastAPI route matching order**: Fixed paths (`/callback`) must be defined BEFORE dynamic paths (`/{keyword}`) or they'll be captured as path params.
 
-4. **Auth middleware must exempt admin login AND OAuth callback**: Both `/admin/auth/callback` and `/oauth/callback` paths need no session. Add ALL admin login paths to `EXEMPT_PATHS` in `auth.py` (`/admin/login`, `/admin/auth/login`, `/admin/auth/callback`, `/admin/access-denied`).
+4. **Auth middleware must exempt admin login AND OAuth callback**: Both `/admin/auth/callback` and `/oauth/callback` paths need no session. Add ALL admin login paths to `EXEMPT_PATHS` in `auth.py` (`/admin/login`, `/admin/auth/login`, `/admin/auth/callback`, `/admin/access-denied`). Also add `/oauth` so third parties can complete Gmail/Calendar token setup without admin login.
 
 5. **Edit form should redirect, not return JSON**: Use `RedirectResponse(url=..., status_code=303)` after POST, then check `?updated=1` query param in GET to show toast.
 
@@ -839,7 +840,7 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 
 13. **web_auth.py scope format bug**: Google returns `scope` as a space-separated string. Wrapping it in `[...]` produces `["gmail.readonly calendar.readonly"]` (1 element) instead of `["gmail.readonly", "calendar.readonly"]`. Use `.split()` to fix. Desktop OAuth via `fetch_emails.py` is unaffected (uses `creds.to_json()`).
 
-14. **`token_status` dict shape**: `check_tokens()` returns `[{keyword, has_token, expiry_status, name, active}]`. Routes build `{keyword: full_dict}` for templates. Templates access `tok.has_token` and `tok.expiry_status` — NOT `token_status[keyword]` as a boolean.
+14. **`token_status` dict shape**: `check_tokens()` returns `[{keyword, has_token, expiry_status, name, active}]`. Routes MUST build `{keyword: full_dict}` for templates — NOT `{keyword: bool}`. Templates access `tok.has_token` and `tok.expiry_status` on the full dict. Passing just the boolean breaks token status display and Revoke button visibility.
 
 15. **`apiPostWithBody()` for CSRF forms**: Routes using `Form(...)` need body data as `application/x-www-form-urlencoded`. `apiPost()` sends JSON which FastAPI rejects. Use `apiPostWithBody()` which sends `URLSearchParams` for form-based CSRF routes (delete, activate, deactivate, revoke, import, export).
 

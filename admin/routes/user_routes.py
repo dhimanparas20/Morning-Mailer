@@ -24,7 +24,7 @@ async def users_list(request: Request, search: str = "", sort: str = "name", ord
     reverse = order == "desc"
     users.sort(key=lambda u: str(u.get(sort, "")).lower(), reverse=reverse)
 
-    token_status = {t["keyword"]: t["has_token"] for t in services.check_tokens()}
+    token_status = {t["keyword"]: t for t in services.check_tokens()}
     csrf = generate_csrf_token()
 
     return templates.TemplateResponse(request, "users.html", {
