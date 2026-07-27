@@ -64,8 +64,8 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `should_run_today(user, global_schedule_time, redis_prefix="")`: Checks if user's schedule time has passed today
   - `fetch_emails_with_retry(keyword, max_results, days_threshold)`: Fetches with retry logic
   - `fetch_calendar_events_with_retry(keyword, days, max_results)`: Calendar fetch with retry
-  - `process_user(user, global_schedule_time)`: Full pipeline for one user (email). Always sets `last_run` in Redis even when no emails are fetched — prevents infinite re-processing.
-  - `_process_user_both_channels(user, global_schedule_time)`: Handles combined email + WhatsApp for a user. Sets `last_run` in the no-emails early-return path (same re-processing prevention).
+  - `process_user(user, global_schedule_time)`: Full pipeline for one user (email). Sends "No New Emails" notification when 0 emails fetched. Always sets `last_run` in Redis — prevents re-processing.
+  - `_process_user_both_channels(user, needs_email, needs_whatsapp, today_str, global_schedule_time)`: Handles combined email + WhatsApp for a user. Sends "No New Emails" notification (try/except guarded) when 0 emails fetched. Sets `last_run` per-channel only on successful send.
   - `send_email(to, subject, body, is_html, smtp_user, smtp_password)`: Sends via SMTP
   - `send_whatsapp(mobile, text)`: Sends WhatsApp via WAHA API
 
@@ -88,7 +88,9 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - For each user, checks if current time >= user's schedule_time
   - Email tracking key: `morning_mailer:last_run:<keyword>`
   - WhatsApp tracking key: `morning_mailer:whatsapp_last_run:<keyword>`
-  - `process_user` and `_process_user_both_channels` both **always set `last_run`** even when fetch returns 0 emails — prevents re-processing the same empty window
+  - When fetch returns 0 emails, a "No New Emails" notification is sent via the user's enabled channels
+  - `process_user` **always sets `last_run`** regardless — prevents re-processing the same empty window
+  - `_process_user_both_channels` sets `last_run` per-channel **only on successful send** (try/except guarded) — failed sends retry on next tick
 
 ### 2. admin/ - FastAPI Admin Panel
 
@@ -496,10 +498,11 @@ docker compose exec huey python -c "from tasks import send_email; send_email('te
 5. For each eligible user:
     ├── Fetch emails (fetch_emails_with_retry)
     ├── Fetch calendar events if fetch_calendar=true
-    ├── Summarize with LLM (get_agent().summarize_emails())
-    ├── Send via enabled channels
+    ├── If emails found → Summarize with LLM (get_agent().summarize_emails())
+    ├── If no emails → send "No New Emails" notification (no LLM call)
+    ├── Send summary or notification via enabled channels
     ├── Record history in Redis (record_history)
-    └── Update Redis last_run tracking
+    └── Update Redis last_run tracking on success
 ```
 
 ### Admin Panel Action Flow
@@ -852,7 +855,7 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 
 17. **Force tasks and last_run race condition**: `huey_force_whatsapp_all` and `huey_force_email_all` no longer delete `last_run` keys at the start (which created a race window where `daily_summary()` could also process the same user). Instead, force tasks set the complementary channel's `last_run` key after processing — e.g., `huey_force_whatsapp_all` also sets `morning_mailer:last_run:<keyword>` to prevent `daily_summary` from re-processing for email. This means forcing one channel fulfills both for the day's scheduled run.
 
-18. **`process_user`/`_process_user_both_channels` always sets `last_run` even on empty fetch**: Both functions update the `last_run` Redis key regardless of whether emails were actually fetched. This prevents infinite re-processing when a user has no new emails but their schedule time has passed. Without this, the scheduler would re-process on every check interval tick. Do NOT move `set_user_last_run_date` into the success-only branch.
+18. **No-emails path now sends a notification instead of staying silent**: When 0 emails are fetched, both `process_user` and `_process_user_both_channels` send a "No New Emails" notification via the user's enabled channels. `process_user` always sets `last_run` unconditionally (same as before). `_process_user_both_channels` sets `last_run` per-channel inside try/except — if the notification send fails, `last_run` is NOT set and the user retries on the next scheduler tick (consistent with the existing success-path pattern).
 
 19. **`ipython_startup.py` must use `get_agent()` not `AGENT`**: The `AGENT` variable in `tasks.py` is `None` at module level — only `get_agent()` initializes it lazily. All IPython magic functions must import `get_agent` and call `get_agent().summarize_emails(...)` instead of importing `AGENT` directly, or they'll hit `AttributeError: 'NoneType' object has no attribute 'summarize_emails'`.
 

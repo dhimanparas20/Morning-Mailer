@@ -68,6 +68,7 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - **Per-User History**: Track email/WhatsApp sends in Redis, viewable per user
 - **Token Management**: Revoke tokens per user, token expiry badges (Ready/Expiring/Expired), Setup/Copy OAuth URL buttons for users without tokens
 - **Job Status Checker**: Paste a task ID to check its status on the dashboard
+- **Empty Inbox Notifications**: Users still receive an email/WhatsApp notification when no new emails are found — no silent days
 - **Current Date in Prompts**: All LLM prompts include today's IST date via `{CURRENT_DATE}` placeholder — model never guesses the date
 
 ## Quick Start
@@ -376,7 +377,8 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 - For each user, checks if current time >= user's schedule_time
 - If yes and hasn't run today → processes that user in parallel
 - Users without schedule_time use global SCHEDULE_TIME from .env
-- `last_run` is always set in Redis even when fetch returns 0 emails — prevents re-processing the same empty window
+- When fetch returns 0 emails, a "No New Emails" notification is sent via the user's enabled channels
+- `last_run` is set in Redis after a successful notification — prevents re-processing the same empty window
 
 ### Environment Modes (`ENV_MODE`)
 
