@@ -486,6 +486,26 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
             record_history(keyword, "email", "sent", email_count=len(result["emails"]))
         except Exception:
             pass
+    elif result["success"]:
+        no_email_body = f"""<html><body style="font-family: Arial, sans-serif; padding: 20px;">
+<h2>No New Emails</h2>
+<p>Hello {user_name},</p>
+<p>You have no new emails to summarize today.</p>
+</body></html>"""
+        send_email(
+            to=user_email,
+            subject=f"Daily Email Summary - {user_name}",
+            body=no_email_body,
+            is_html=True,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            keyword=keyword,
+        )
+        try:
+            from admin.services import record_history
+            record_history(keyword, "email", "sent", email_count=0, error="No emails found")
+        except Exception:
+            pass
 
     # Always mark as run to prevent re-processing on every scheduler tick
     now = datetime.now()
@@ -537,13 +557,57 @@ def _process_user_both_channels(
 
     user_schedule = user.get("schedule_time", global_schedule_time)
 
-    if not result["success"] or not result["emails"]:
-        # Still mark as run to prevent re-processing on every scheduler tick
+    no_email = result["success"] and not result["emails"]
+    fetch_failed = not result["success"]
+
+    if no_email or fetch_failed:
+        if fetch_failed:
+            logger.warning(f"[{keyword}] Email fetch failed, will notify user")
         if needs_email:
-            set_user_last_run_date(keyword, today_str, user_schedule)
+            try:
+                if fetch_failed:
+                    body_text = f"""<html><body style="font-family: Arial, sans-serif; padding: 20px;">
+<h2>Email Fetch Failed</h2>
+<p>Hello {user_name},</p>
+<p>We encountered an issue while fetching your emails today. Please check your OAuth token or try again later.</p>
+</body></html>"""
+                    subject_text = f"Daily Email Summary - {user_name} (Fetch Failed)"
+                else:
+                    body_text = f"""<html><body style="font-family: Arial, sans-serif; padding: 20px;">
+<h2>No New Emails</h2>
+<p>Hello {user_name},</p>
+<p>You have no new emails to summarize today.</p>
+</body></html>"""
+                    subject_text = f"Daily Email Summary - {user_name}"
+                send_email(
+                    to=user_email,
+                    subject=subject_text,
+                    body=body_text,
+                    is_html=True,
+                    smtp_user=smtp_user,
+                    smtp_password=smtp_password,
+                    keyword=keyword,
+                )
+                set_user_last_run_date(keyword, today_str, user_schedule)
+                logger.info(f"[{keyword}] {'Fetch failed' if fetch_failed else 'No emails'}, sent email notification")
+            except Exception as e:
+                logger.error(f"[{keyword}] Notification email failed: {e}")
+
         if needs_whatsapp:
-            redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
-            redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user_schedule)
+            try:
+                if fetch_failed:
+                    whatsapp_text = f"*Daily Email Summary - {user_name}*\n\nHello {user_name},\n\nWe encountered an issue while fetching your emails today. Please check your OAuth token or try again later."
+                else:
+                    whatsapp_text = f"*Daily Email Summary - {user_name}*\n\nHello {user_name},\n\nYou have no new emails to summarize today."
+                send_whatsapp(mobile, whatsapp_text, keyword=keyword)
+                redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
+                redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user_schedule)
+                logger.info(f"[{keyword}] {'Fetch failed' if fetch_failed else 'No emails'}, sent WhatsApp notification")
+            except Exception as e:
+                logger.error(f"[{keyword}] Notification WhatsApp failed: {e}")
+
+        audit_log("process_user_both", keyword, "success",
+                  f"emails_fetched=0, calendar_events={len(calendar_events)}, email={'yes' if needs_email else 'no'}, whatsapp={'yes' if needs_whatsapp else 'no'}")
         return {"keyword": keyword, "name": user_name, "emails_fetched": 0, "calendar_events": len(calendar_events)}
 
     if needs_email:
