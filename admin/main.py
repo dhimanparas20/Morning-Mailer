@@ -48,6 +48,11 @@ templates.env.filters["format_timestamp"] = _fmt_ts
 templates.env.filters["fmt_duration"] = lambda d: f"{d:.2f}s" if isinstance(d, (int, float)) else "-"
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     from admin import services

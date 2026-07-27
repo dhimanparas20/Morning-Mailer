@@ -136,6 +136,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/oauth",
         "/static",
         "/favicon.ico",
+        "/health",
     }
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:

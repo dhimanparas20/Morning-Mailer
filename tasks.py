@@ -74,7 +74,7 @@ redis_client = redis.from_url(os.getenv("REDIS_URL"), decode_responses=True)
 # ── Audit Logging ──────────────────────────────────────────────────────────
 
 AUDIT_LOG_KEY = "morning_mailer:audit_log"
-AUDIT_LOG_TTL = 86400 * 60  # 60 days
+AUDIT_LOG_TTL = 86400 * 30  # 30 days
 
 
 def audit_log(
@@ -453,6 +453,7 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
             "error": "OAuth token not found. Run OAuth setup first.",
         }
 
+    _t0 = time.time()
     result = fetch_emails_with_retry(keyword, max_results, days_threshold)
     emails_fetched = result.get("count", 0) if result.get("success") else 0
 
@@ -512,7 +513,7 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
     set_user_last_run_date(keyword, now.strftime("%Y-%m-%d"), user_schedule)
 
     audit_log("process_user", keyword, "success" if result.get("success") else "skipped",
-              f"emails_fetched={emails_fetched}, calendar_events={len(calendar_events)}")
+              f"emails_fetched={emails_fetched}, calendar_events={len(calendar_events)}", time.time() - _t0)
 
     return {
         "keyword": keyword,
@@ -544,6 +545,7 @@ def _process_user_both_channels(
         logger.warning(f"[{keyword}] OAuth token not found, skipping")
         return {"keyword": keyword, "name": user_name, "emails_fetched": 0, "error": "OAuth token missing"}
 
+    _t0 = time.time()
     result = fetch_emails_with_retry(keyword, max_results, days_threshold)
     emails_fetched = result.get("count", 0) if result.get("success") else 0
 
@@ -606,8 +608,13 @@ def _process_user_both_channels(
             except Exception as e:
                 logger.error(f"[{keyword}] Notification WhatsApp failed: {e}")
 
-        audit_log("process_user_both", keyword, "success",
-                  f"emails_fetched=0, calendar_events={len(calendar_events)}, email={'yes' if needs_email else 'no'}, whatsapp={'yes' if needs_whatsapp else 'no'}")
+        _status = "partial" if fetch_failed else "success"
+        _details = f"emails_fetched=0, calendar_events={len(calendar_events)}, email={'yes' if needs_email else 'no'}, whatsapp={'yes' if needs_whatsapp else 'no'}"
+        if fetch_failed:
+            _details += ", fetch=failed, notification_sent"
+        else:
+            _details += ", notification_sent"
+        audit_log("process_user_both", keyword, _status, _details, time.time() - _t0)
         return {"keyword": keyword, "name": user_name, "emails_fetched": 0, "calendar_events": len(calendar_events)}
 
     if needs_email:
@@ -640,7 +647,7 @@ def _process_user_both_channels(
             logger.error(f"[{keyword}] WhatsApp send failed: {e}")
 
     audit_log("process_user_both", keyword, "success",
-              f"emails_fetched={emails_fetched}, calendar_events={len(calendar_events)}, email={'yes' if needs_email else 'no'}, whatsapp={'yes' if needs_whatsapp else 'no'}")
+              f"emails_fetched={emails_fetched}, calendar_events={len(calendar_events)}, email={'yes' if needs_email else 'no'}, whatsapp={'yes' if needs_whatsapp else 'no'}", time.time() - _t0)
     return {"keyword": keyword, "name": user_name, "emails_fetched": emails_fetched, "calendar_events": len(calendar_events)}
 
 
@@ -690,9 +697,12 @@ def huey_send_whatsapp_to_user(keyword: str) -> dict[str, Any]:
 
     max_results, days_threshold = get_user_settings(user)
     result = fetch_emails_with_retry(keyword, max_results, days_threshold)
-    if not result.get("success") or not result.get("emails"):
-        audit_log("huey_send_whatsapp_to_user", keyword, "skipped", "No emails fetched", time.time() - _t0)
-        return {"keyword": keyword, "emails_fetched": 0, "message": "No emails fetched"}
+    if not result.get("success"):
+        audit_log("huey_send_whatsapp_to_user", keyword, "error", "Email fetch failed", time.time() - _t0)
+        return {"keyword": keyword, "emails_fetched": 0, "error": "Email fetch failed"}
+    if not result.get("emails"):
+        audit_log("huey_send_whatsapp_to_user", keyword, "skipped", "No emails to summarize", time.time() - _t0)
+        return {"keyword": keyword, "emails_fetched": 0, "message": "No emails to summarize"}
 
     calendar_events = []
     if user.get("fetch_calendar", False):
@@ -750,18 +760,25 @@ def huey_force_whatsapp_all() -> dict[str, Any]:
     results = []
     today_str = datetime.now().strftime("%Y-%m-%d")
     for user in wa_users:
+        _f_t0 = time.time()
         keyword = user.get("keyword", "default")
         mobile = user.get("mobile", "")
         user_name = user.get("name", "Unknown")
 
         if not has_valid_token(keyword):
+            audit_log("huey_force_whatsapp_all", keyword, "skipped", "No OAuth token", time.time() - _f_t0)
             results.append({"keyword": keyword, "error": "No OAuth token"})
             continue
 
         max_results, days_threshold = get_user_settings(user)
         result = fetch_emails_with_retry(keyword, max_results, days_threshold)
-        if not result.get("success") or not result.get("emails"):
-            results.append({"keyword": keyword, "emails_fetched": 0})
+        if not result.get("success"):
+            audit_log("huey_force_whatsapp_all", keyword, "error", "Email fetch failed", time.time() - _f_t0)
+            results.append({"keyword": keyword, "emails_fetched": 0, "error": "Email fetch failed"})
+            continue
+        if not result.get("emails"):
+            audit_log("huey_force_whatsapp_all", keyword, "skipped", "No emails to summarize", time.time() - _f_t0)
+            results.append({"keyword": keyword, "emails_fetched": 0, "message": "No emails to summarize"})
             continue
 
         calendar_events = []
@@ -776,8 +793,11 @@ def huey_force_whatsapp_all() -> dict[str, Any]:
             redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
             redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user.get("schedule_time", SCHEDULE_TIME))
             redis_client.set(f"morning_mailer:last_run:{keyword}", today_str)
+            audit_log("huey_force_whatsapp_all", keyword, "success",
+                      f"emails_fetched={result.get('count', 0)}, calendar_events={len(calendar_events)}", time.time() - _f_t0)
             results.append({"keyword": keyword, "emails_fetched": result.get("count", 0), "status": "sent"})
         except Exception as e:
+            audit_log("huey_force_whatsapp_all", keyword, "error", f"Send failed: {e}", time.time() - _f_t0)
             results.append({"keyword": keyword, "error": str(e)})
 
     total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
@@ -910,7 +930,10 @@ def huey_fetch_calendar_and_send_both(keyword: str, days: int = 2) -> dict[str, 
         except Exception as e:
             wa_status = f"error: {e}"
 
-    audit_log("huey_fetch_calendar_and_send_both", keyword, "success",
+    _both_ok = email_status == "sent" and (wa_status == "sent" or not mobile)
+    _both_failed = (email_status and email_status != "sent") and (not mobile or (wa_status and wa_status != "sent"))
+    _final_status = "success" if _both_ok else ("error" if _both_failed else "partial")
+    audit_log("huey_fetch_calendar_and_send_both", keyword, _final_status,
               f"events={len(events)}, email={email_status}, whatsapp={wa_status}", time.time() - _t0)
     return {"keyword": keyword, "events": len(events), "email_status": email_status, "whatsapp_status": wa_status}
 
@@ -1146,6 +1169,7 @@ def daily_summary() -> dict[str, Any]:
         _startup_summary_printed = True
         print_startup_summary()
 
+    _t0 = time.time()
     now = datetime.now()
     current_time_str = now.strftime("%H:%M")
     today_str = now.strftime("%Y-%m-%d")
@@ -1174,6 +1198,7 @@ def daily_summary() -> dict[str, Any]:
 
     if not all_keywords:
         logger.info(f"No users eligible to run at {current_time_str}")
+        audit_log("daily_summary", "system", "skipped", "No eligible users", time.time() - _t0)
         return {
             "date": today_str,
             "time": now.strftime("%H:%M:%S"),
@@ -1205,12 +1230,18 @@ def daily_summary() -> dict[str, Any]:
             except Exception as e:
                 logger.error(f"Error processing user: {e}")
                 results.append({"error": str(e)})
+                try:
+                    _user = futures[future]
+                    _kw = _user.get("keyword", "unknown")
+                except Exception:
+                    _kw = "unknown"
+                audit_log("daily_summary", _kw, "error", f"exception={e}", time.time() - _t0)
 
     total_emails = sum(r.get("emails_fetched", 0) for r in results if "error" not in r)
     logger.success(f"Daily summary completed: {len(results)} user(s) processed, {total_emails} emails")
 
     audit_log("daily_summary", "system", "success",
-              f"eligible={len(eligible_list)}, processed={len(results)}, emails_fetched={total_emails}")
+              f"eligible={len(eligible_list)}, processed={len(results)}, emails_fetched={total_emails}", time.time() - _t0)
 
     return {
         "date": today_str,

@@ -61,6 +61,15 @@ def _save_users_json(users: list[dict[str, Any]]) -> None:
         json.dump(users, f, indent=2)
 
 
+def _audit_log(task_name: str, keyword: str, status: str, details: str) -> None:
+    """Helper to write audit log via tasks module (fire-and-forget)."""
+    try:
+        tasks = _import_tasks()
+        tasks.audit_log(task_name, keyword, status, details, time.time())
+    except Exception:
+        pass
+
+
 # ── User CRUD ──────────────────────────────────────────────────────────────
 
 def list_users() -> list[dict[str, Any]]:
@@ -87,6 +96,7 @@ def create_user(data: dict[str, Any]) -> None:
             raise ValueError(f"User '{data['keyword']}' already exists")
         mgr.add_or_update(data)
         log.success(f"Created user '{data['keyword']}' ({data.get('name', '')})")
+        _audit_log("admin.create_user", data["keyword"], "success", f"name={data.get('name','')}")
     else:
         users = _list_users_json()
         if any(u.get("keyword") == data["keyword"] for u in users):
@@ -94,6 +104,7 @@ def create_user(data: dict[str, Any]) -> None:
         users.append(data)
         _save_users_json(users)
         log.success(f"Created user '{data['keyword']}' ({data.get('name', '')}) [JSON]")
+        _audit_log("admin.create_user", data["keyword"], "success", f"name={data.get('name','')} [JSON]")
 
 
 def update_user(keyword: str, data: dict[str, Any]) -> None:
@@ -109,6 +120,7 @@ def update_user(keyword: str, data: dict[str, Any]) -> None:
                 merged.pop(key, None)
         mgr.add_or_update(merged)
         log.success(f"Updated user '{keyword}'")
+        _audit_log("admin.update_user", keyword, "success", "user updated")
     else:
         users = _list_users_json()
         idx = next((i for i, u in enumerate(users) if u.get("keyword") == keyword), None)
@@ -121,6 +133,7 @@ def update_user(keyword: str, data: dict[str, Any]) -> None:
         users[idx] = merged
         _save_users_json(users)
         log.success(f"Updated user '{keyword}' [JSON]")
+        _audit_log("admin.update_user", keyword, "success", "user updated [JSON]")
 
 
 def delete_user(keyword: str) -> bool:
@@ -129,6 +142,7 @@ def delete_user(keyword: str) -> bool:
         result = mgr.delete(keyword)
         if result:
             log.success(f"Deleted user '{keyword}'")
+            _audit_log("admin.delete_user", keyword, "success", "")
         return result
     else:
         users = _list_users_json()
@@ -137,6 +151,7 @@ def delete_user(keyword: str) -> bool:
             return False
         _save_users_json(new_users)
         log.success(f"Deleted user '{keyword}' [JSON]")
+        _audit_log("admin.delete_user", keyword, "success", "[JSON]")
         return True
 
 
@@ -146,6 +161,7 @@ def activate_user(keyword: str) -> bool:
         result = mgr.activate(keyword)
         if result:
             log.success(f"Activated user '{keyword}'")
+            _audit_log("admin.activate_user", keyword, "success", "")
         return result
     else:
         users = _list_users_json()
@@ -154,6 +170,7 @@ def activate_user(keyword: str) -> bool:
                 u["active"] = True
                 _save_users_json(users)
                 log.success(f"Activated user '{keyword}' [JSON]")
+                _audit_log("admin.activate_user", keyword, "success", "[JSON]")
                 return True
         return False
 
@@ -164,6 +181,7 @@ def deactivate_user(keyword: str) -> bool:
         result = mgr.deactivate(keyword)
         if result:
             log.success(f"Deactivated user '{keyword}'")
+            _audit_log("admin.deactivate_user", keyword, "success", "")
         return result
     else:
         users = _list_users_json()
@@ -172,6 +190,7 @@ def deactivate_user(keyword: str) -> bool:
                 u["active"] = False
                 _save_users_json(users)
                 log.success(f"Deactivated user '{keyword}' [JSON]")
+                _audit_log("admin.deactivate_user", keyword, "success", "[JSON]")
                 return True
         return False
 
@@ -181,6 +200,7 @@ def import_users(path: str = "users.json") -> int:
     if mgr is not None:
         count = mgr.import_from_json(path)
         log.success(f"Imported {count} user(s) from {path}")
+        _audit_log("admin.import_users", "all", "success", f"count={count}")
         return count
     else:
         users_path = Path(path)
@@ -190,6 +210,7 @@ def import_users(path: str = "users.json") -> int:
             users = json.load(f)
         _save_users_json(users)
         log.success(f"Imported {len(users)} user(s) from {path} [JSON]")
+        _audit_log("admin.import_users", "all", "success", f"count={len(users)} [JSON]")
         return len(users)
 
 
@@ -202,12 +223,14 @@ def import_users_from_list(users: list[dict[str, Any]]) -> int:
             mgr.add_or_update(user)
             count += 1
         log.success(f"Imported {count} user(s) from uploaded list")
+        _audit_log("admin.import_users", "all", "success", f"count={count} (upload)")
         return count
     else:
         existing = _list_users_json()
         existing.extend(users)
         _save_users_json(existing)
         log.success(f"Imported {len(users)} user(s) from uploaded list [JSON]")
+        _audit_log("admin.import_users", "all", "success", f"count={len(users)} (upload) [JSON]")
         return len(users)
 
 
@@ -216,12 +239,14 @@ def export_users(path: str = "users.json") -> int:
     if mgr is not None:
         count = mgr.export_to_json(path)
         log.success(f"Exported {count} user(s) to {path}")
+        _audit_log("admin.export_users", "all", "success", f"count={count}")
         return count
     else:
         users = _list_users_json()
         with open(path, "w") as f:
             json.dump(users, f, indent=2)
         log.success(f"Exported {len(users)} user(s) to {path} [JSON]")
+        _audit_log("admin.export_users", "all", "success", f"count={len(users)} [JSON]")
         return len(users)
 
 
@@ -230,11 +255,13 @@ def clear_users() -> int:
     if mgr is not None:
         count = mgr.clear_all()
         log.success(f"Cleared {count} user(s) from Redis")
+        _audit_log("admin.clear_users", "all", "success", f"count={count}")
         return count
     else:
         count = len(_list_users_json())
         _save_users_json([])
         log.success(f"Cleared {count} user(s) from JSON")
+        _audit_log("admin.clear_users", "all", "success", f"count={count} [JSON]")
         return count
 
 
@@ -310,6 +337,7 @@ def revoke_token(keyword: str) -> bool:
     token_path = TOKEN_DIR / f"token_{keyword}.json"
     if token_path.exists():
         token_path.unlink()
+        _audit_log("admin.revoke_token", keyword, "success", "")
         return True
     return False
 
@@ -321,12 +349,15 @@ def bulk_send_email(keywords: list[str]) -> dict[str, Any]:
     for kw in keywords:
         user = get_user(kw)
         if not user:
+            _audit_log("admin.bulk_send_email", kw, "error", "User not found")
             results.append({"keyword": kw, "status": "error", "error": "User not found"})
             continue
         try:
             r = enqueue_task(tasks.huey_send_email_to_user, kw)
+            _audit_log("admin.bulk_send_email", kw, "success", f"task_id={r.get('task_id')}")
             results.append({"keyword": kw, "status": "enqueued", "task_id": r.get("task_id")})
         except Exception as e:
+            _audit_log("admin.bulk_send_email", kw, "error", str(e))
             results.append({"keyword": kw, "status": "error", "error": str(e)})
     return {"results": results, "total": len(keywords), "enqueued": sum(1 for r in results if r["status"] == "enqueued")}
 
@@ -338,15 +369,19 @@ def bulk_send_whatsapp(keywords: list[str]) -> dict[str, Any]:
     for kw in keywords:
         user = get_user(kw)
         if not user:
+            _audit_log("admin.bulk_send_whatsapp", kw, "error", "User not found")
             results.append({"keyword": kw, "status": "error", "error": "User not found"})
             continue
         if not user.get("mobile"):
+            _audit_log("admin.bulk_send_whatsapp", kw, "error", "No mobile number")
             results.append({"keyword": kw, "status": "error", "error": "No mobile number"})
             continue
         try:
             r = enqueue_task(tasks.huey_send_whatsapp_to_user, kw)
+            _audit_log("admin.bulk_send_whatsapp", kw, "success", f"task_id={r.get('task_id')}")
             results.append({"keyword": kw, "status": "enqueued", "task_id": r.get("task_id")})
         except Exception as e:
+            _audit_log("admin.bulk_send_whatsapp", kw, "error", str(e))
             results.append({"keyword": kw, "status": "error", "error": str(e)})
     return {"results": results, "total": len(keywords), "enqueued": sum(1 for r in results if r["status"] == "enqueued")}
 
@@ -356,6 +391,7 @@ def bulk_revoke_tokens(keywords: list[str]) -> dict[str, Any]:
     results = []
     for kw in keywords:
         revoked = revoke_token(kw)
+        _audit_log("admin.bulk_revoke_tokens", kw, "success" if revoked else "skipped", "")
         results.append({"keyword": kw, "status": "revoked" if revoked else "not_found"})
     return {"results": results, "total": len(keywords), "revoked": sum(1 for r in results if r["status"] == "revoked")}
 
@@ -655,6 +691,7 @@ def run_switch_model(provider: str, model_name: str | None = None, temperature: 
     tasks.get_agent().hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
     msg = f"Model switched to {provider} ({model_name or 'default'})"
     log.success(msg)
+    _audit_log("admin.switch_model", "system", "success", msg)
     return msg
 
 
@@ -662,6 +699,7 @@ def run_clear_last_run(keyword: str | None = None) -> str:
     """Clear last_run dates in Redis."""
     r = get_redis()
     if not r:
+        _audit_log("admin.clear_last_run", "system", "error", "Redis unavailable")
         return "Redis unavailable - cannot clear last_run"
     if not keyword or keyword == "all":
         users = list_users()
@@ -670,10 +708,12 @@ def run_clear_last_run(keyword: str | None = None) -> str:
             r.delete(f"morning_mailer:last_run:{kw}")
             r.delete(f"morning_mailer:last_schedule:{kw}")
         log.success(f"Cleared last_run for {len(users)} user(s)")
+        _audit_log("admin.clear_last_run", "all", "success", f"cleared={len(users)}")
         return f"Cleared last_run for {len(users)} user(s)"
     r.delete(f"morning_mailer:last_run:{keyword}")
     r.delete(f"morning_mailer:last_schedule:{keyword}")
     log.success(f"Cleared last_run for {keyword}")
+    _audit_log("admin.clear_last_run", keyword, "success", "")
     return f"Cleared last_run for {keyword}"
 
 
@@ -715,6 +755,7 @@ def generate_oauth_url(keyword: str) -> str | None:
     config_path = CLIENT_SECRET_WEB_PATH if CLIENT_SECRET_WEB_PATH.exists() else CLIENT_SECRET_PATH
     if not config_path.exists():
         log.warning(f"OAuth URL generation failed: no client_secret file found")
+        _audit_log("admin.generate_oauth_url", keyword, "error", "No client_secret file")
         return None
 
     with open(config_path) as f:
@@ -724,9 +765,11 @@ def generate_oauth_url(keyword: str) -> str | None:
     try:
         auth_url = get_auth_url(client_config, keyword)
         log.info(f"Generated OAuth URL for '{keyword}'")
+        _audit_log("admin.generate_oauth_url", keyword, "success", "")
         return auth_url
     except Exception as e:
         log.error(f"OAuth URL generation failed for '{keyword}': {e}")
+        _audit_log("admin.generate_oauth_url", keyword, "error", str(e))
         return None
 
 
@@ -735,6 +778,7 @@ def exchange_oauth_code(code: str, keyword: str) -> bool:
     config_path = CLIENT_SECRET_WEB_PATH if CLIENT_SECRET_WEB_PATH.exists() else CLIENT_SECRET_PATH
     if not config_path.exists():
         log.warning(f"OAuth exchange failed: no client_secret file found")
+        _audit_log("admin.exchange_oauth_code", keyword, "error", "No client_secret file")
         return False
 
     with open(config_path) as f:
@@ -761,7 +805,9 @@ def exchange_oauth_code(code: str, keyword: str) -> bool:
         with open(token_path, "w") as f:
             json.dump(converted_token, f, indent=2)
         log.success(f"OAuth token saved for '{keyword}'")
+        _audit_log("admin.exchange_oauth_code", keyword, "success", "")
         return True
     except Exception as e:
         log.error(f"OAuth exchange failed for '{keyword}': {e}")
+        _audit_log("admin.exchange_oauth_code", keyword, "error", str(e))
         return False
