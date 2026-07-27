@@ -26,7 +26,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-from modules import get_logger, format_timestamp
+from modules import get_logger, format_timestamp, now_ist
 from modules.fetch_emails import fetch_emails, load_users as load_email_users, get_token_path
 from modules.fetch_calendar import fetch_upcoming_events, has_valid_token as has_valid_calendar_token
 from modules.agent_mod import AgentModule
@@ -125,7 +125,7 @@ def should_run_today(user: dict[str, Any], global_schedule_time: str, redis_pref
     keyword = user.get("keyword", "default")
     user_schedule = user.get("schedule_time", global_schedule_time)
 
-    now = datetime.now()
+    now = now_ist()
     current_time = now.time()
 
     user_hour, user_minute = map(int, user_schedule.split(":"))
@@ -257,7 +257,7 @@ def fetch_emails_with_retry(keyword: str, max_results: int = None, days_threshol
         try:
             logger.info(f"[{keyword}] Attempt {attempt + 1}/{RETRY_COUNT}")
 
-            now = datetime.now()
+            now = now_ist()
             date_to = now.isoformat()
             days_to_fetch = days_threshold + 1
             date_from = (now - timedelta(days=days_to_fetch)).isoformat()
@@ -509,7 +509,7 @@ def process_user(user: dict[str, Any], global_schedule_time: str) -> dict[str, A
             pass
 
     # Always mark as run to prevent re-processing on every scheduler tick
-    now = datetime.now()
+    now = now_ist()
     set_user_last_run_date(keyword, now.strftime("%Y-%m-%d"), user_schedule)
 
     audit_log("process_user", keyword, "success" if result.get("success") else "skipped",
@@ -713,7 +713,7 @@ def huey_send_whatsapp_to_user(keyword: str) -> dict[str, Any]:
     summary = get_agent().summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user.get("name", "Unknown"), calendar_events=calendar_events)
     send_whatsapp(mobile, summary, keyword=keyword)
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = now_ist().strftime("%Y-%m-%d")
     redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
     redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user.get("schedule_time", SCHEDULE_TIME))
 
@@ -734,7 +734,7 @@ def huey_force_email_all() -> dict[str, Any]:
     _t0 = time.time()
     users = load_users()
     results = []
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = now_ist().strftime("%Y-%m-%d")
 
     for user in users:
         if not user.get("use_email", True):
@@ -758,7 +758,7 @@ def huey_force_whatsapp_all() -> dict[str, Any]:
     wa_users = [u for u in users if u.get("mobile") and u.get("use_whatsapp", True)]
 
     results = []
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = now_ist().strftime("%Y-%m-%d")
     for user in wa_users:
         _f_t0 = time.time()
         keyword = user.get("keyword", "default")
@@ -982,7 +982,7 @@ def daily_email_summary() -> dict[str, Any]:
     - Check if user hasn't been processed today
     - If yes, process that user in parallel
     """
-    now = datetime.now()
+    now = now_ist()
     current_time_str = now.strftime("%H:%M")
     today_str = now.strftime("%Y-%m-%d")
 
@@ -1060,7 +1060,7 @@ def daily_whatsapp_summary() -> dict[str, Any]:
     - Check if user hasn't been processed today
     - Fetch emails, summarize with WhatsApp prompt, send via WAHA
     """
-    now = datetime.now()
+    now = now_ist()
     current_time_str = now.strftime("%H:%M")
     today_str = now.strftime("%Y-%m-%d")
 
@@ -1170,7 +1170,7 @@ def daily_summary() -> dict[str, Any]:
         print_startup_summary()
 
     _t0 = time.time()
-    now = datetime.now()
+    now = now_ist()
     current_time_str = now.strftime("%H:%M")
     today_str = now.strftime("%Y-%m-%d")
 

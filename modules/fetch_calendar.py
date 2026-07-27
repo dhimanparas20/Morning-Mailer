@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from modules.generics import now_ist
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -213,13 +214,13 @@ def fetch_events(
     try:
         service = get_calendar_service(keyword)
 
-        now = datetime.utcnow()
+        now = now_ist()
         if not time_min:
-            time_min = now.isoformat() + "Z"
+            time_min = now.isoformat()
             result["time_min"] = time_min
         if not time_max:
             future = now + timedelta(days=7)
-            time_max = future.isoformat() + "Z"
+            time_max = future.isoformat()
             result["time_max"] = time_max
 
         logger.info(f"Fetching up to {max_results} events from {result['time_min']} to {result['time_max']}")
@@ -275,9 +276,9 @@ def fetch_upcoming_events(keyword: str = "default", days: int = 2, max_results: 
 
     This is the main function used by the summarization pipeline.
     """
-    now = datetime.utcnow()
-    time_min = now.isoformat() + "Z"
-    time_max = (now + timedelta(days=days)).isoformat() + "Z"
+    now = now_ist()
+    time_min = now.isoformat()
+    time_max = (now + timedelta(days=days)).isoformat()
 
     return fetch_events(
         keyword=keyword,

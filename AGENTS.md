@@ -292,10 +292,14 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 - `MODEL_REGISTRY`: Dict mapping provider names to config (module, class, api_key_env, model_env)
 
 ### 9. modules/generics.py - Utilities
-- **Purpose**: Shared utility functions
+- **Purpose**: Shared utility functions. All time functions use **IST (UTC+5:30)** exclusively.
 - **Key Functions**:
-  - `current_date_ist()`: Returns current date in IST (UTC+5:30) as "July 17, 2026" format
-  - `now_iso()`, `get_timestamp()`, `format_timestamp()`, `parse_datetime()`, `utc_to_local()`: Time helpers
+  - `now_ist()`: Returns current datetime in IST. This is the single source of truth — use it everywhere instead of `datetime.now()`.
+  - `current_date_ist()`: Returns current date in IST as "July 17, 2026" format (used for `{CURRENT_DATE}` placeholder)
+  - `now_iso()`: Returns current time in IST as ISO 8601 string with `+05:30` offset
+  - `format_timestamp(ts)`: Formats a Unix timestamp as IST human-readable string
+  - `utc_to_local(dt_str)`: Converts an ISO 8601 string to IST
+  - `get_timestamp()`, `parse_datetime()`: Epoch/parse helpers
 
 ### 10. modules/prompt.py - Prompt Templates
 - **Variables**:
@@ -635,8 +639,9 @@ There are two distinct OAuth flows:
 
 ### Scheduling Logic:
 - Task runs every SCHEDULE_CHECK_INTERVAL minutes (default: 5)
-- At each run, checks each user:
-  - If current time >= user's schedule_time
+- All time comparisons use **IST (UTC+5:30)** — `schedule_time` values are interpreted as IST
+- For each user, checks each user:
+  - If current time (IST) >= user's schedule_time
   - If ENV_MODE=dev: always run (skip last_run check)
   - If ENV_MODE=prod: only if hasn't run today
 - Email and WhatsApp tracked separately in Redis
@@ -732,7 +737,6 @@ The codebase uses `functools` extensively to cache pure helper functions and opt
 | `modules/fetch_calendar.py` | `_format_datetime()` | 256 | Pure datetime formatting |
 | `modules/fetch_calendar.py` | `_get_event_datetime()` | 256 | Pure event field extraction |
 | `modules/web_auth.py` | `get_callback_url()` | 1 | Static from env |
-| `modules/generics.py` | `current_date_ist()` | 1 | Static computation (IST offset is fixed) |
 | `modules/web_auth.py` | `get_credentials_path()` | 1 | Static path |
 | `modules/web_auth.py` | `get_web_credentials_path()` | 1 | Static path |
 | `modules/web_auth.py` | `load_client_config()` | 1 | Static JSON file |

@@ -374,6 +374,7 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 ### Scheduling
 
 - Task runs every `SCHEDULE_CHECK_INTERVAL` minutes (default: 5)
+- All times are **IST (UTC+5:30)** — `schedule_time` values are interpreted as IST
 - For each user, checks if current time >= user's schedule_time
 - If yes and hasn't run today → processes that user in parallel
 - Users without schedule_time use global SCHEDULE_TIME from .env

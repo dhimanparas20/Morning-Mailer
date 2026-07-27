@@ -64,7 +64,7 @@ def force_whatsapp_summary(line):
     """Trigger WhatsApp summary for ALL users immediately (ignores schedule time)."""
     from tasks import load_users, fetch_emails_with_retry, get_user_settings, has_valid_token, send_whatsapp, get_agent, SCHEDULE_TIME, redis_client
     from modules.prompt import WHATSAPP_SYSTEM_PROMPT
-    from datetime import datetime
+    from modules.generics import now_ist
     users = load_users()
     if not users:
         print("[yellow]No active users found[/yellow]")
@@ -94,7 +94,7 @@ def force_whatsapp_summary(line):
         summary = get_agent().summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
         try:
             send_whatsapp(mobile, summary)
-            today_str = datetime.now().strftime("%Y-%m-%d")
+            today_str = now_ist().strftime("%Y-%m-%d")
             redis_client.set(f"morning_mailer:whatsapp_last_run:{kw}", today_str)
             redis_client.set(f"morning_mailer:whatsapp_last_schedule:{kw}", user.get("schedule_time", SCHEDULE_TIME))
             print(f"    [green]✓ Sent ({result.get('count')} emails)[/green]")
@@ -387,7 +387,7 @@ def send_whatsapp_summary(line):
         return
     from tasks import load_users, fetch_emails_with_retry, get_user_settings, has_valid_token, send_whatsapp, get_agent, SCHEDULE_TIME, redis_client
     from modules.prompt import WHATSAPP_SYSTEM_PROMPT
-    from datetime import datetime
+    from modules.generics import now_ist
     users = load_users()
     user = _find_user_by_identifier(users, identifier)
     if not user:
@@ -416,7 +416,7 @@ def send_whatsapp_summary(line):
     summary = get_agent().summarize_emails(result["emails"], prompt=WHATSAPP_SYSTEM_PROMPT, user_name=user_name)
     try:
         send_whatsapp(mobile, summary)
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = now_ist().strftime("%Y-%m-%d")
         user_schedule = user.get("schedule_time", SCHEDULE_TIME)
         redis_client.set(f"morning_mailer:whatsapp_last_run:{keyword}", today_str)
         redis_client.set(f"morning_mailer:whatsapp_last_schedule:{keyword}", user_schedule)

@@ -288,6 +288,7 @@ def user_fields() -> dict[str, Any]:
 # ── Token Management ───────────────────────────────────────────────────────
 
 def check_tokens() -> list[dict[str, Any]]:
+    from modules.generics import now_ist
     from datetime import datetime
     users = list_users()
     result = []
@@ -305,7 +306,7 @@ def check_tokens() -> list[dict[str, Any]]:
                     # expiry can be ISO format string or None
                     if isinstance(expiry_str, str):
                         expiry_dt = datetime.fromisoformat(expiry_str.replace("Z", "+00:00"))
-                        days_left = (expiry_dt - datetime.now(expiry_dt.tzinfo)).days
+                        days_left = (expiry_dt - now_ist()).days
                         if days_left < 0:
                             expiry_status = "expired"
                         elif days_left <= 7:
