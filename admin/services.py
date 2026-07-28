@@ -686,14 +686,14 @@ def run_send_test_whatsapp(mobile: str, message: str) -> dict[str, Any]:
     return enqueue_task(tasks.huey_test_send_whatsapp, mobile, message)
 
 
-def run_switch_model(provider: str, model_name: str | None = None, temperature: float | None = None) -> str:
-    """Switch LLM model (runs in app container, no enqueue needed)."""
-    tasks = _get_tasks()
-    tasks.get_agent().hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
-    msg = f"Model switched to {provider} ({model_name or 'default'})"
+def run_switch_model(provider: str, model_name: str | None = None, temperature: float | None = None) -> dict:
+    """Switch LLM model — enqueues a huey task so it actually runs in the huey worker process."""
+    t = enqueue_task(tasks.huey_switch_model, provider, model_name, temperature)
+    task_id = t.id if hasattr(t, 'id') else str(t)
+    msg = f"Model switch to {provider} ({model_name or 'default'}) enqueued"
     log.success(msg)
     _audit_log("admin.switch_model", "system", "success", msg)
-    return msg
+    return {"task_id": task_id, "status": "enqueued", "message": msg}
 
 
 def run_clear_last_run(keyword: str | None = None) -> str:

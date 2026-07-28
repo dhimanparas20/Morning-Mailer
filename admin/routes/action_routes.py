@@ -192,7 +192,7 @@ async def action_switch_model(provider: str = Form(...), model_name: str = Form(
         log.info(f"Switching model to {provider} ({model_name or 'default'})")
         temp = float(temperature) if temperature else None
         result = services.run_switch_model(provider, model_name or None, temp)
-        return JSONResponse({"ok": True, "message": result})
+        return JSONResponse({"ok": True, "result": result})
     except Exception as e:
         log.error(f"Model switch failed: {e}")
         raise HTTPException(500, str(e))

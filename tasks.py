@@ -14,7 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import requests
 from dotenv import load_dotenv
@@ -958,6 +958,33 @@ def huey_test_send_whatsapp(mobile: str, message: str) -> str:
     result = send_whatsapp(mobile, message)
     audit_log("huey_test_send_whatsapp", mobile, "success", "", time.time() - _t0)
     return result
+
+
+@huey.task(retries=1, retry_delay=2)
+def huey_switch_model(provider: Literal["openai", "google", "openrouter", "nvidia", "ollama"], model_name: str | None = None, temperature: float | None = None) -> str:
+    """Switch the LLM model inside the huey worker process.
+    
+    For Ollama: pulls the model first if a specific model_name is provided.
+    """
+    _t0 = time.time()
+
+    if provider == "ollama" and model_name:
+        ollama_base = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+        logger.info(f"[ollama] Pulling model '{model_name}' from {ollama_base}...")
+        try:
+            import requests as _req
+            resp = _req.post(f"{ollama_base}/api/pull", json={"name": model_name}, timeout=300)
+            if resp.status_code == 200:
+                logger.success(f"[ollama] Model '{model_name}' pulled successfully")
+            else:
+                logger.warning(f"[ollama] Pull returned status {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.warning(f"[ollama] Pull failed (model may already exist): {e}")
+
+    get_agent().hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
+    msg = f"Model switched to {provider} ({model_name or 'default'})"
+    audit_log("huey_switch_model", "system", "success", msg, time.time() - _t0)
+    return msg
 
 
 # =============================================================================

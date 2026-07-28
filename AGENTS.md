@@ -80,6 +80,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `huey_fetch_calendar_and_send_both(keyword, days)`: Calendar → both
   - `huey_test_send_email(subject, body)`: Test email
   - `huey_test_send_whatsapp(mobile, message)`: Test WhatsApp
+  - `huey_switch_model(provider, model_name, temperature)`: Switch LLM model inside huey worker. For Ollama, auto-pulls the model via `POST /api/pull` before switching.
 
 - **Periodic Tasks**:
   - `daily_summary()`: Unified task — checks all users, processes email and/or WhatsApp per user preference. Also prints startup summary on first run (guarded by `_startup_summary_printed` flag).
@@ -130,6 +131,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `run_send_email_summary(keyword)` → enqueues `huey_send_email_to_user`
   - `run_send_whatsapp_summary(keyword)` → enqueues `huey_send_whatsapp_to_user`
   - `run_force_email_summary()` → enqueues `huey_force_email_all`
+  - `run_switch_model(provider, model_name, temperature)` → enqueues `huey_switch_model` (runs in huey, not app container)
   - `check_task_status(task_id)` — polls huey for task result
   - `get_redis_status()` — Redis connection info
   - `get_scheduler_status()` — Scheduler config from tasks module
@@ -190,6 +192,13 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 - `POST /users/export` — bulk export trigger (enqueues tasks)
 
 **Action Routes**:
+- `POST /actions/email/send/{keyword}` — enqueue email send for one user
+- `POST /actions/whatsapp/send/{keyword}` — enqueue WhatsApp send for one user
+- `POST /actions/force/email` — force email for ALL users
+- `POST /actions/force/whatsapp` — force WhatsApp for ALL users
+- `POST /actions/test/email` — test email send
+- `POST /actions/test/whatsapp` — test WhatsApp send
+- `POST /actions/model/switch` — switch LLM model (enqueues huey task, returns task_id)
 - `GET /actions/history/{keyword}` — returns per-user send history from Redis
 - `POST /actions/calendar/fetch/{keyword}` — fetches calendar events, returns JSON for modal display
 - `POST /actions/bulk/email` — sends email to all selected keywords
@@ -881,3 +890,5 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 25. **Keyword spaces → underscores**: When creating a user, spaces in the keyword field are automatically replaced with underscores (`keyword.replace(" ", "_")`). This prevents Redis key issues and token filename mismatches.
 
 26. **Add user redirects, not JSON**: The `POST /users/add` route returns `RedirectResponse(url="/users?created=1", status_code=303)` instead of JSON. The JS form handler in `user_form.html` intercepts the form submit, sends via `fetch()`, and redirects to `/users?created=1` (add mode) or `/users/{keyword}/edit?updated=1` (edit mode). The `users.html` template shows a "User created successfully" toast when `?created=1` is present.
+
+27. **Model switch executes in huey, not app**: `run_switch_model()` in `admin/services.py` enqueues `huey_switch_model` — a huey task that runs inside the **huey worker process**. It does NOT call `tasks.get_agent().hot_switch_model()` directly from the app container (that would only switch the app's unused agent instance). The huey task also auto-pulls Ollama models via `POST /api/pull` before switching when `provider == "ollama"`.
