@@ -339,7 +339,7 @@ Login requires a Google account. Only emails listed in `ADMIN_EMAILS` (comma-sep
 
 ### Features
 - **Google OAuth Login**: Secure authentication via Google — no passwords to manage
-- **Dashboard**: Stats cards, quick actions, scheduler config, current model display, job status checker, users overview with last run times
+- **Dashboard**: Stats cards, quick actions, scheduler config, job status checker, users overview with last run times
 - **Users**: Full CRUD with search/sort/filter, per-user action buttons, OAuth Setup + Revoke + Copy buttons, token expiry badges (Ready/Expiring/Expired), history button, bulk selection checkboxes
 - **Bulk Actions**: Select multiple users → trigger email/WhatsApp/revoke tokens for all selected
 - **Summary Templates**: Per-user custom prompt textarea in edit form, stored in Redis

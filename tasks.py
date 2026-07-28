@@ -66,26 +66,6 @@ def get_agent():
     if AGENT is None:
         AGENT = AgentModule()
         AGENT.init()
-        # Save initial model config to Redis for admin panel display
-        try:
-            provider = os.getenv("MODEL_PROVIDER", "openrouter")
-            _model_envs = {
-                "openai": "OPENAI_MODEL",
-                "nvidia": "NVIDIA_MODEL",
-                "openrouter": "OPEN_ROUTER_CHAT_MODEL",
-                "google": "GOOGLE_MODEL",
-                "ollama": "OLLAMA_MODEL",
-            }
-            model = os.getenv(_model_envs.get(provider, ""), "") or "default"
-            temp = os.getenv("MODEL_TEMPERATURE", "0.5")
-            redis_client.hset(MODEL_CONFIG_KEY, mapping={
-                "provider": provider,
-                "model": model,
-                "temperature": temp,
-                "updated_at": now_ist().isoformat(),
-            })
-        except Exception:
-            pass
     return AGENT
 
 # Redis client for tracking last run
@@ -95,7 +75,6 @@ redis_client = redis.from_url(os.getenv("REDIS_URL"), decode_responses=True)
 
 AUDIT_LOG_KEY = "morning_mailer:audit_log"
 AUDIT_LOG_TTL = 86400 * 30  # 30 days
-MODEL_CONFIG_KEY = "morning_mailer:model_config"
 
 
 def audit_log(
@@ -1004,27 +983,6 @@ def huey_switch_model(provider: Literal["openai", "google", "openrouter", "nvidi
 
     get_agent().hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
     msg = f"Model switched to {provider} ({model_name or 'default'})"
-
-    # Save current model config to Redis for admin panel display
-    try:
-        _temp = temperature if temperature is not None else float(os.getenv("MODEL_TEMPERATURE", "0.5"))
-        # Resolve actual model name — if user left it empty, look up provider's env var default
-        _model_envs = {
-            "openai": "OPENAI_MODEL",
-            "nvidia": "NVIDIA_MODEL",
-            "openrouter": "OPEN_ROUTER_CHAT_MODEL",
-            "google": "GOOGLE_MODEL",
-            "ollama": "OLLAMA_MODEL",
-        }
-        _resolved = model_name or os.getenv(_model_envs.get(provider, ""), "") or "default"
-        redis_client.hset(MODEL_CONFIG_KEY, mapping={
-            "provider": provider,
-            "model": _resolved,
-            "temperature": str(_temp),
-            "updated_at": now_ist().isoformat(),
-        })
-    except Exception:
-        pass
 
     audit_log("huey_switch_model", "system", "success", msg, time.time() - _t0)
     return msg

@@ -64,7 +64,6 @@ async def dashboard(request: Request):
         "users": users,
         "redis_status": redis_status, "scheduler": scheduler, "tokens": tokens,
         "user_stats": services.get_last_summary_stats(),
-        "current_model": services.get_current_model(),
     })
 
 
