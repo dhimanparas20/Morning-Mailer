@@ -688,6 +688,7 @@ def run_send_test_whatsapp(mobile: str, message: str) -> dict[str, Any]:
 
 def run_switch_model(provider: str, model_name: str | None = None, temperature: float | None = None) -> dict:
     """Switch LLM model — enqueues a huey task so it actually runs in the huey worker process."""
+    tasks = _get_tasks()
     t = enqueue_task(tasks.huey_switch_model, provider, model_name, temperature)
     task_id = t.id if hasattr(t, 'id') else str(t)
     msg = f"Model switch to {provider} ({model_name or 'default'}) enqueued"
