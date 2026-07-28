@@ -13,6 +13,13 @@ router = APIRouter(prefix="/users")
 templates = Jinja2Templates(directory="admin/templates")
 
 
+def _sanitize_mobile(mobile: str) -> str:
+    mobile = mobile.replace(" ", "").replace("-", "").replace("+", "")
+    if mobile and not mobile.startswith("91") and len(mobile) == 10:
+        mobile = "91" + mobile
+    return mobile
+
+
 @router.get("", response_class=HTMLResponse)
 async def users_list(request: Request, search: str = "", sort: str = "name", order: str = "asc"):
     users = services.list_users()
@@ -86,6 +93,9 @@ async def add_user_submit(
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
 
+    keyword = keyword.replace(" ", "_")
+    mobile = _sanitize_mobile(mobile)
+
     data = {
         "name": name, "email": email, "keyword": keyword,
         "active": active == "true", "use_email": use_email == "true",
@@ -119,7 +129,8 @@ async def add_user_submit(
             "error": str(e),
         })
 
-    return {"ok": True, "message": f"User '{keyword}' created"}
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/users?created=1", status_code=303)
 
 
 @router.get("/api/{keyword}")
@@ -156,6 +167,8 @@ async def edit_user_submit(
 ):
     if not validate_csrf_token(csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
+
+    mobile = _sanitize_mobile(mobile)
 
     data = {
         "name": name, "email": email,

@@ -18,6 +18,10 @@
 </div>
 {% endif %}
 
+{% if request.query_params.get('created') == '1' %}
+<script>showToast('User created successfully', 'success');</script>
+{% endif %}
+
 <div class="card mb-4">
     <div class="card-body">
         <form method="GET" action="/users" class="row g-2 align-items-end">

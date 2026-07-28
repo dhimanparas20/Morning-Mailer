@@ -112,7 +112,8 @@
 {% endblock %}
 {% block scripts %}
 <script>
-document.querySelector('form').addEventListener('submit', function() {
+document.querySelector('form').addEventListener('submit', function(e) {
+    e.preventDefault();
     document.querySelectorAll('.toggle-field').forEach(function(cb) {
         if (!cb.checked) {
             var h = document.createElement('input');
@@ -122,6 +123,18 @@ document.querySelector('form').addEventListener('submit', function() {
             cb.parentNode.appendChild(h);
         }
     });
+    var form = this;
+    var isAdd = form.action.endsWith('/add');
+    var fd = new FormData(form);
+    fetch(form.action, { method: 'POST', body: fd, redirect: 'manual' })
+        .then(function(resp) {
+            if (isAdd) {
+                window.location.href = '/users?created=1';
+            } else {
+                window.location.href = form.action + '?updated=1';
+            }
+        })
+        .catch(function(err) { showToast('Network error: ' + err.message, 'error'); });
 });
 </script>
 {% if success_msg %}
