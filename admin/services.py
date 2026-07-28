@@ -763,10 +763,18 @@ def get_current_model() -> dict[str, Any]:
             }
     except Exception:
         pass
-    # Fallback to .env defaults
+    # Fallback to .env defaults — pick correct model env var per provider
+    provider = os.getenv("MODEL_PROVIDER", "openrouter")
+    _model_envs = {
+        "openai": "OPENAI_MODEL",
+        "nvidia": "NVIDIA_MODEL",
+        "openrouter": "OPEN_ROUTER_CHAT_MODEL",
+        "google": "GOOGLE_MODEL",
+        "ollama": "OLLAMA_MODEL",
+    }
     return {
-        "provider": os.getenv("MODEL_PROVIDER", "openrouter"),
-        "model": os.getenv("OPENAI_MODEL") or os.getenv("OLLAMA_MODEL", "default"),
+        "provider": provider,
+        "model": os.getenv(_model_envs.get(provider, ""), "") or "default",
         "temperature": os.getenv("MODEL_TEMPERATURE", "0.5"),
         "updated_at": "",
     }
