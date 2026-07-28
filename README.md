@@ -333,7 +333,7 @@ Login requires a Google account. Only emails listed in `ADMIN_EMAILS` (comma-sep
 - **Audit Logs**: Browse all task executions with filtering by task type, keyword, status, and free-text search. Pagination and auto-refresh included
 - **Job Status**: Paste a task ID to check its status (pending/finished/error)
 - **OAuth**: Setup OAuth tokens through the browser (click "Setup" → authorize → done), or share Copy URL with third parties for remote token setup (no admin login required)
-- **System**: Redis status, model switching, last-run clearing
+- **System**: Redis status, model switching (enqueued to huey worker, auto-pulls Ollama models), last-run clearing
 
 ### Architecture
 The admin panel enqueues huey tasks via Redis. The huey container picks them up and executes. This means:
