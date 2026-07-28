@@ -121,4 +121,7 @@ def create_llm(
         if base_url:
             model_kwargs["base_url"] = base_url
 
+    if model_provider == "ollama":
+        model_kwargs["num_ctx"] = int(os.getenv("OLLAMA_NUM_CTX", "32768"))
+
     return ModelClass(**model_kwargs)
