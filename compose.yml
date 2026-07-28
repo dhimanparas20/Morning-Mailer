@@ -37,9 +37,6 @@ services:
         - app-network
       volumes:
         - ollama_data:/root/.ollama
-      dns:
-        - 1.1.1.1
-        - 8.8.8.8
       environment:
         - OLLAMA_HOST=0.0.0.0
         - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
