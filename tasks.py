@@ -66,6 +66,19 @@ def get_agent():
     if AGENT is None:
         AGENT = AgentModule()
         AGENT.init()
+        # Save initial model config to Redis for admin panel display
+        try:
+            provider = os.getenv("MODEL_PROVIDER", "openrouter")
+            model = os.getenv("OPENAI_MODEL") or os.getenv("OLLAMA_MODEL", "")
+            temp = os.getenv("MODEL_TEMPERATURE", "0.5")
+            redis_client.hset(MODEL_CONFIG_KEY, mapping={
+                "provider": provider,
+                "model": model,
+                "temperature": temp,
+                "updated_at": now_ist().isoformat(),
+            })
+        except Exception:
+            pass
     return AGENT
 
 # Redis client for tracking last run
@@ -75,6 +88,7 @@ redis_client = redis.from_url(os.getenv("REDIS_URL"), decode_responses=True)
 
 AUDIT_LOG_KEY = "morning_mailer:audit_log"
 AUDIT_LOG_TTL = 86400 * 30  # 30 days
+MODEL_CONFIG_KEY = "morning_mailer:model_config"
 
 
 def audit_log(
@@ -983,6 +997,19 @@ def huey_switch_model(provider: Literal["openai", "google", "openrouter", "nvidi
 
     get_agent().hot_switch_model(model_provider=provider, model_name=model_name, temperature=temperature)
     msg = f"Model switched to {provider} ({model_name or 'default'})"
+
+    # Save current model config to Redis for admin panel display
+    try:
+        _temp = temperature if temperature is not None else float(os.getenv("MODEL_TEMPERATURE", "0.5"))
+        redis_client.hset(MODEL_CONFIG_KEY, mapping={
+            "provider": provider,
+            "model": model_name or "",
+            "temperature": str(_temp),
+            "updated_at": now_ist().isoformat(),
+        })
+    except Exception:
+        pass
+
     audit_log("huey_switch_model", "system", "success", msg, time.time() - _t0)
     return msg
 

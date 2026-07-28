@@ -749,6 +749,29 @@ def get_scheduler_status() -> dict[str, Any]:
     }
 
 
+def get_current_model() -> dict[str, Any]:
+    """Get current LLM model config from Redis (set by huey worker on init/switch)."""
+    try:
+        tasks = _import_tasks()
+        cfg = tasks.redis_client.hgetall(tasks.MODEL_CONFIG_KEY)
+        if cfg:
+            return {
+                "provider": cfg.get("provider", "unknown"),
+                "model": cfg.get("model", "") or "default",
+                "temperature": cfg.get("temperature", "0.5"),
+                "updated_at": cfg.get("updated_at", ""),
+            }
+    except Exception:
+        pass
+    # Fallback to .env defaults
+    return {
+        "provider": os.getenv("MODEL_PROVIDER", "openrouter"),
+        "model": os.getenv("OPENAI_MODEL") or os.getenv("OLLAMA_MODEL", "default"),
+        "temperature": os.getenv("MODEL_TEMPERATURE", "0.5"),
+        "updated_at": "",
+    }
+
+
 def generate_oauth_url(keyword: str) -> str | None:
     from admin.config import CLIENT_SECRET_WEB_PATH, CLIENT_SECRET_PATH, get_settings
     settings = get_settings()
