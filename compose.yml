@@ -37,8 +37,6 @@ services:
       - app-network
     volumes:
       - ollama_data:/root/.ollama
-      - ./ollama-entrypoint.sh:/entrypoint.sh
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
       - OLLAMA_HOST=0.0.0.0
@@ -47,7 +45,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 30s
       start_interval: 10s
     # GPU passthrough (uncomment for NVIDIA GPU support):
     # deploy:
