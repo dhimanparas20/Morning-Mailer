@@ -8,7 +8,7 @@ SERVER_PID=$!
 # Wait for the server to become available (timeout after 60s)
 echo "Waiting for Ollama server to start..."
 TRIES=0
-until curl -s http://localhost:11434/api/tags > /dev/null 2>&1; do
+until wget -qO- http://localhost:11434/api/tags > /dev/null 2>&1; do
   TRIES=$((TRIES + 1))
   if [ "$TRIES" -ge 60 ]; then
     echo "ERROR: Ollama server failed to start within 60s"
