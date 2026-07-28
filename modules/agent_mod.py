@@ -19,7 +19,7 @@ class AgentModule:
 
     def init(
         self,
-        model_provider: Literal["openai", "google", "openrouter", "nvidia"] | None = None,
+        model_provider: Literal["openai", "google", "openrouter", "nvidia", "ollama"] | None = None,
         model_temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> None:
@@ -35,7 +35,7 @@ class AgentModule:
             max_tokens=tokens,
         )
 
-    def hot_switch_model(self, model_provider: Literal["openai", "google", "openrouter", "nvidia"] | None = None, model_name: str | None = None, temperature: float | None = None) -> None:
+    def hot_switch_model(self, model_provider: Literal["openai", "google", "openrouter", "nvidia", "ollama"] | None = None, model_name: str | None = None, temperature: float | None = None) -> None:
         provider = model_provider or os.getenv("MODEL_PROVIDER", "nvidia")
         temp = temperature if temperature is not None else float(os.getenv("MODEL_TEMPERATURE", 0.4))
         logger.info(f"Hot-switching model: {provider} / {model_name or 'default'} (temp: {temp})")

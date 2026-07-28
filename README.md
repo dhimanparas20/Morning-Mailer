@@ -19,19 +19,19 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 ┌──────────────┐     ┌──────────────┐     ┌─────────────┐
 │  Admin Panel │────▶│    Huey      │────▶│  LLM (NVIDIA/
 │  (FastAPI)   │     │  (Worker)    │     │  OpenAI/    │
-│  Port 8000   │     │              │     │  Groq)       │
+│  Port 8000   │     │              │     │  Ollama...)  │
 └──────────────┘     └──────────────┘     └─────────────┘
        │                     │
        │              ┌──────┴──────┐
        │              │   Redis      │
        │              │  (Valkey)   │
        │              └─────────────┘
-       ▼
-┌──────────────┐
-│    WAHA      │
-│  (WhatsApp)  │
-│  Port 3000   │
-└──────────────┘
+       ▼                    │
+┌──────────────┐     ┌──────┴──────┐
+│    WAHA      │     │   Ollama    │
+│  (WhatsApp)  │     │  (Local LLM)│
+│  Port 3000   │     │  Port 11434 │
+└──────────────┘     └─────────────┘
 ```
 
 | Container | Purpose | Does | Does NOT |
@@ -40,6 +40,7 @@ Every schedule check (every 5 minutes by default), Morning Mailer:
 | `huey` | Task queue consumer | Process all huey tasks (fetch emails, summarize, send) | Serve UI |
 | `valkey` | Redis | Task queue, user storage, scheduling state | - |
 | `waha` | WhatsApp API | Send WhatsApp messages | - |
+| `ollama` | Local LLM | Run open-source models (llama3.2, etc.) locally | - |
 
 The admin panel **never executes heavy work directly** — it only enqueues huey tasks and returns task IDs.
 
@@ -70,13 +71,16 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - **Job Status Checker**: Paste a task ID to check its status on the dashboard
 - **Empty Inbox Notifications**: Users still receive an email/WhatsApp notification when no new emails are found — no silent days
 - **Current Date in Prompts**: All LLM prompts include today's IST date via `{CURRENT_DATE}` placeholder — model never guesses the date
+- **Ollama Support**: Run LLMs locally via Ollama (Docker service with auto-pull), no API key required
+- **Mobile Number Sanitization**: Auto-strips spaces/hyphens/+, auto-prepends country code 91 for 10-digit Indian numbers
+- **Keyword Sanitization**: Spaces auto-replaced with underscores when creating users
 
 ## Quick Start
 
 ### Prerequisites
 - Docker & Docker Compose
 - Gmail OAuth credentials (one `client_secret_web.json` for all users)
-- LLM API key (NVIDIA, OpenAI, Groq, or OpenRouter)
+- LLM API key (NVIDIA, OpenAI, Groq, OpenRouter, or Google) — **or** Ollama for local inference (no API key needed)
 - Gmail SMTP credentials for sending emails
 - A Google Cloud project with **OAuth consent screen** configured (for admin login)
 
@@ -97,7 +101,7 @@ cp .env.sample .env
 
 Key variables:
 ```bash
-# LLM Provider (nvidia/openai/groq/openrouter/google)
+# LLM Provider (nvidia/openai/groq/openrouter/google/ollama)
 MODEL_PROVIDER=openrouter
 OPEN_ROUTER_API_KEY=your-api-key
 
@@ -171,7 +175,7 @@ If no users are found in Redis, the system falls back to `users.json`.
 | `schedule_time` | No | .env SCHEDULE_TIME | When to run (HH:MM) |
 | `smtp_host_user` | No | .env EMAIL_HOST_USER | Custom SMTP sender |
 | `smtp_host_password` | No | .env EMAIL_HOST_PASSWORD | Custom SMTP password |
-| `mobile` | No | - | WhatsApp number (country code, no +) |
+| `mobile` | No | - | WhatsApp number (auto-strips spaces/+/hyphens, auto-prepends 91 for 10-digit) |
 | `summary_template` | No | (empty = default) | Custom prompt for email summarization |
 
 ### 4. First-Time OAuth Setup
@@ -269,7 +273,7 @@ Morning-Mailer/
 ├── .env                        # Configuration
 ├── .env.sample                 # Environment template
 ├── Dockerfile                  # Container image
-├── compose.yml                 # Docker orchestration (4 services)
+├── compose.yml                 # Docker orchestration (5 services)
 ├── pyproject.toml              # Dependencies
 ├── README.md                   # This file
 └── AGENTS.md                   # LLM-facing codebase docs
@@ -283,6 +287,7 @@ Morning-Mailer/
 | `huey` | `huey` | - | Task queue consumer |
 | `valkey` | `valkey` | 6379 | Redis (task queue + user storage) |
 | `waha` | `waha` | 3000 | WhatsApp HTTP API |
+| `ollama` | `ollama` | 11434 | Local LLM (auto-pulls model on first start) |
 
 ### Starting Services
 ```bash
@@ -343,9 +348,11 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `MODEL_PROVIDER` | LLM: nvidia/openai/groq/openrouter/google | openrouter |
+| `MODEL_PROVIDER` | LLM: nvidia/openai/groq/openrouter/google/ollama | openrouter |
 | `MODEL_TEMPERATURE` | AI creativity (0-2) | 0.5 |
 | `MAX_TOKENS` | Max response length | 10500 |
+| `OLLAMA_BASE_URL` | Ollama server URL (local or external) | http://ollama:11434 |
+| `OLLAMA_MODEL` | Ollama model to use | llama3.2:3b |
 | `REDIS_URL` | Valkey Redis connection string | - |
 | `SCHEDULE_TIME` | Default run time (HH:MM) | 08:00 |
 | `DAYS_THRESHOLD` | Default days to look back | 2 |
@@ -479,7 +486,7 @@ uv run python -m modules.fetch_emails setup <keyword>
 - **Admin Auth**: Google OAuth (PKCE + Redis state) via httpx
 - **Gmail API**: google-api-python-client
 - **Calendar API**: google-api-python-client
-- **LLM**: LangChain (NVIDIA, OpenAI, Groq, OpenRouter, Google)
+- **LLM**: LangChain (NVIDIA, OpenAI, Groq, OpenRouter, Google, Ollama)
 - **Logging**: loguru
 - **Email**: smtplib (SMTP)
 - **WhatsApp**: WAHA (WhatsApp HTTP API)

@@ -27,6 +27,35 @@ services:
     env_file:
       - .env
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - '11434:11434'
+    networks:
+      - app-network
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull $OLLAMA_MODEL && wait"]
+    environment:
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+    # GPU passthrough (uncomment for NVIDIA GPU support):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: [ "CMD", "ollama", "list" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+
   valkey:
     image: docker.io/bitnami/valkey:latest
     container_name: valkey
@@ -176,4 +205,5 @@ networks:
 volumes:
   redis-data:
   valkey_data: {}
+  ollama_data: {}
 #  dozzle_data:

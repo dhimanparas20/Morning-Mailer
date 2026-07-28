@@ -42,13 +42,20 @@ MODEL_REGISTRY: dict[str, ModelConfig] = {
         model_env="NVIDIA_MODEL",
         api_key_env="NVIDIA_API_KEY",
     ),
+    "ollama": ModelConfig(
+        module_name="langchain_ollama",
+        class_name="ChatOllama",
+        model_env="OLLAMA_MODEL",
+        api_key_env="",
+        base_url_env="OLLAMA_BASE_URL",
+    ),
 }
 
 
 def create_llm(
     model_name: str | None = None,
     api_key: Optional[str] = None,
-    model_provider: Literal["openai", "google", "openrouter", "nvidia"] = "openai",
+    model_provider: Literal["openai", "google", "openrouter", "nvidia", "ollama"] = "openai",
     model_temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
 ):
@@ -79,11 +86,11 @@ def create_llm(
     temperature = model_temperature if model_temperature is not None else float(os.getenv("MODEL_TEMPERATURE", "0.5"))
 
     resolved_model = model_name if model_name else os.getenv(config.model_env)
-    resolved_api_key = api_key or os.getenv(config.api_key_env)
+    resolved_api_key = api_key or (os.getenv(config.api_key_env) if config.api_key_env else None)
 
     if not resolved_model:
         raise ValueError(f"No model name provided and env var '{config.model_env}' is not set.")
-    if not resolved_api_key:
+    if not resolved_api_key and config.api_key_env:
         raise ValueError(f"No API key provided and env var '{config.api_key_env}' is not set.")
 
     logger.info(
@@ -102,10 +109,12 @@ def create_llm(
     # Build kwargs dynamically to avoid passing unsupported params
     model_kwargs = {
         "model": resolved_model,
-        "api_key": resolved_api_key,
         "temperature": temperature,
         "max_tokens": max_tokens or int(os.getenv("MAX_TOKENS", 1500)),
     }
+
+    if resolved_api_key:
+        model_kwargs["api_key"] = resolved_api_key
 
     if config.base_url_env:
         base_url = os.getenv(config.base_url_env)

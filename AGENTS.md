@@ -10,19 +10,19 @@ Morning Mailer is an AI-powered **multi-user** email summarization system with a
 ┌──────────────┐     ┌──────────────┐     ┌─────────────┐
 │  Admin Panel │────▶│    Huey      │────▶│  LLM (NVIDIA/
 │  (FastAPI)   │     │  (Worker)    │     │  OpenAI/    │
-│  Port 8000   │     │              │     │  Groq)       │
+│  Port 8000   │     │              │     │  Ollama...)  │
 └──────────────┘     └──────────────┘     └─────────────┘
        │                     │
        │              ┌──────┴──────┐
        │              │   Redis      │
        │              │  (Valkey)   │
        │              └─────────────┘
-       ▼
-┌──────────────┐
-│    WAHA      │
-│  (WhatsApp)  │
-│  Port 3000   │
-└──────────────┘
+       ▼                    │
+┌──────────────┐     ┌──────┴──────┐
+│    WAHA      │     │   Ollama    │
+│  (WhatsApp)  │     │  (Local LLM)│
+│  Port 3000   │     │  Port 11434 │
+└──────────────┘     └─────────────┘
 ```
 
 ### Container Responsibilities
@@ -33,6 +33,7 @@ Morning Mailer is an AI-powered **multi-user** email summarization system with a
 | `huey` | Task queue consumer | Process all huey tasks (fetch emails, summarize, send) | Serve UI |
 | `valkey` | Redis | Task queue, user storage, scheduling state | - |
 | `waha` | WhatsApp API | Send WhatsApp messages | - |
+| `ollama` | Local LLM | Run open-source models (llama3.2, etc.) locally | - |
 
 ### Key Architecture Decision
 
@@ -282,7 +283,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `init()`: Initializes LLM from config (MODEL_PROVIDER)
   - `summarize_emails(emails, prompt, user_name, calendar_events)`: Generates summary
   - `hot_switch_model(provider, model_name, temperature)`: Hot-swap LLM at runtime
-- **Supported Providers**: nvidia, openai, groq, openrouter, google
+- **Supported Providers**: nvidia, openai, groq, openrouter, google, ollama
 - **Placeholder Replacement**: Two placeholders are replaced at runtime in `summarize_emails()`:
   - `{USER_NAME}` → user's display name
   - `{CURRENT_DATE}` → `current_date_ist()` from `modules.generics` (returns IST date like "July 17, 2026")
@@ -290,6 +291,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 ### 8. modules/agent_utils.py - LLM Factory
 - `create_llm(model_name, api_key, model_provider, model_temperature, max_tokens)`: Factory function
 - `MODEL_REGISTRY`: Dict mapping provider names to config (module, class, api_key_env, model_env)
+- **Ollama Special Handling**: Ollama uses `base_url` instead of `api_key` — `api_key` is set to `"unused"` and `api_key_env` is set to `None` in the registry
 
 ### 9. modules/generics.py - Utilities
 - **Purpose**: Shared utility functions. All time functions use **IST (UTC+5:30)** exclusively.
@@ -376,7 +378,7 @@ Morning-Mailer/
 ├── .env                        # Configuration
 ├── .env.sample                 # Environment template
 ├── Dockerfile                  # Container image
-├── compose.yml                 # Docker orchestration (4 services)
+├── compose.yml                 # Docker orchestration (5 services)
 ├── pyproject.toml              # Dependencies
 ├── README.md                   # Human-readable docs
 └── AGENTS.md                   # This file (LLM-facing docs)
@@ -611,10 +613,12 @@ There are two distinct OAuth flows:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `MODEL_PROVIDER` | LLM provider | openrouter |
+| `MODEL_PROVIDER` | LLM provider (nvidia/openai/groq/openrouter/google/ollama) | openrouter |
 | `OPENAI_MODEL` | Model for OpenAI | gpt-4.1-nano |
 | `MODEL_TEMPERATURE` | LLM creativity | 0.5 |
 | `MAX_TOKENS` | Max response length | 10500 |
+| `OLLAMA_BASE_URL` | Ollama server URL (local or external) | http://ollama:11434 |
+| `OLLAMA_MODEL` | Ollama model to use | llama3.2:3b |
 | `REDIS_URL` | Valkey Redis connection | - |
 | `SCHEDULE_TIME` | Default run time | 08:00 |
 | `DAYS_THRESHOLD` | Default look back | 2 |
@@ -692,6 +696,7 @@ docker compose exec huey uv run ipython
 - **langchain-groq**: Groq LLM
 - **langchain-google-genai**: Google Gemini
 - **langchain-openrouter**: OpenRouter LLM
+- **langchain-ollama**: Ollama (local LLM)
 - **loguru**: Logging
 - **redis**: Task queue backend (Valkey)
 - **requests**: HTTP client for WAHA API
@@ -866,3 +871,13 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 20. **Admin OAuth uses PKCE + Redis state (not SessionMiddleware)**: The admin login flow does NOT use authlib's `authorize_redirect`/`authorize_access_token` (which depend on `SessionMiddleware`). Instead, it manually generates PKCE challenges, saves state + code_verifier to Redis, and exchanges codes via `httpx`. This avoids cookie conflicts between `SessionMiddleware`'s `session` cookie and our Redis-backed `session_token` cookie. Do NOT re-add `SessionMiddleware` to `main.py`.
 
 21. **Two separate OAuth callback paths**: `/admin/auth/callback` (admin login) and `/oauth/callback` (per-user Gmail/Calendar tokens) are different routes. They share the same GCP OAuth app credentials but serve different purposes. Both must be registered as redirect URIs in GCP Console.
+
+22. **Ollama provider skips api_key**: In `modules/agent_utils.py`, the `create_llm()` function skips passing `api_key` to `ChatOllama` — Ollama uses `base_url` instead. The `MODEL_REGISTRY` sets `api_key_env=None` for Ollama, and `create_llm()` conditionally omits `api_key` when `api_key_env is None`. Do NOT pass `api_key=""` to ChatOllama — it may error or attempt a needless auth check.
+
+23. **Ollama auto-pull on container start**: The `ollama` service in `compose.yml` uses an entrypoint script that runs `ollama pull $OLLAMA_MODEL` before starting the server. This means the first `docker compose up -d` will download the model (may take minutes). Subsequent starts use the cached model from the `ollama_data` volume.
+
+24. **Mobile number sanitization**: The `_sanitize_mobile()` helper in `admin/routes/user_routes.py` strips spaces, hyphens, and `+` characters, then auto-prepends `"91"` for 10-digit numbers (Indian mobile format). This is applied in both add and edit user routes. The stored format is always `<country code><10 digit number>` with no separators.
+
+25. **Keyword spaces → underscores**: When creating a user, spaces in the keyword field are automatically replaced with underscores (`keyword.replace(" ", "_")`). This prevents Redis key issues and token filename mismatches.
+
+26. **Add user redirects, not JSON**: The `POST /users/add` route returns `RedirectResponse(url="/users?created=1", status_code=303)` instead of JSON. The JS form handler in `user_form.html` intercepts the form submit, sends via `fetch()`, and redirects to `/users?created=1` (add mode) or `/users/{keyword}/edit?updated=1` (edit mode). The `users.html` template shows a "User created successfully" toast when `?created=1` is present.
