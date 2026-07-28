@@ -28,36 +28,51 @@ services:
       - .env
 
   ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    restart: unless-stopped
-    ports:
-      - '11434:11434'
-    networks:
-      - app-network
-    volumes:
-      - ollama_data:/root/.ollama
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
-    environment:
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
-      - OLLAMA_HOST=0.0.0.0
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-      start_interval: 10s
-    # GPU passthrough (uncomment for NVIDIA GPU support):
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+      image: ollama/ollama:latest
+      container_name: ollama
+      restart: unless-stopped
+      ports:
+        - '11434:11434'
+      networks:
+        - app-network
+      volumes:
+        - ollama_data:/root/.ollama
+      dns:
+        - 1.1.1.1
+        - 8.8.8.8
+      environment:
+        - OLLAMA_HOST=0.0.0.0
+        - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+        # === CPU & memory tuning ===
+        - OLLAMA_NUM_THREADS=4          # match your CPU cores
+        - OLLAMA_CONTEXT_LENGTH=2048    # shorter context = faster generation
+        - OLLAMA_KEEP_ALIVE=5m          # keep model loaded in RAM between requests
+        # Optional: disable GPU completely (saves a few ms)
+        - OLLAMA_NUM_GPU=0
+      healthcheck:
+        test: [ "CMD", "ollama", "list" ]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 30s
+        start_interval: 10s
+      # Reserve resources to prevent CPU/memory contention
+      deploy:
+        resources:
+          limits:
+            cpus: "4"
+            memory: "12G"       # leave 4G for system & other containers
+          reservations:
+            cpus: "4"
+            memory: "8G"        # guaranteed minimum
+      # GPU passthrough (uncomment for NVIDIA GPU support):
+      # deploy:
+      #   resources:
+      #     reservations:
+      #       devices:
+      #         - driver: nvidia
+      #           count: 1
+      #           capabilities: [gpu]
 
   valkey:
     image: docker.io/bitnami/valkey:latest
