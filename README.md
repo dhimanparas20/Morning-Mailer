@@ -339,7 +339,7 @@ Login requires a Google account. Only emails listed in `ADMIN_EMAILS` (comma-sep
 
 ### Features
 - **Google OAuth Login**: Secure authentication via Google — no passwords to manage
-- **Dashboard**: Stats cards, quick actions, scheduler config, job status checker, users overview with last run times
+- **Dashboard**: Stats cards, quick actions, scheduler config, current model display, job status checker, users overview with last run times
 - **Users**: Full CRUD with search/sort/filter, per-user action buttons, OAuth Setup + Revoke + Copy buttons, token expiry badges (Ready/Expiring/Expired), history button, bulk selection checkboxes
 - **Bulk Actions**: Select multiple users → trigger email/WhatsApp/revoke tokens for all selected
 - **Summary Templates**: Per-user custom prompt textarea in edit form, stored in Redis
@@ -366,6 +366,10 @@ The admin panel enqueues huey tasks via Redis. The huey container picks them up 
 | `MODEL_PROVIDER` | LLM: nvidia/openai/groq/openrouter/google/ollama | openrouter |
 | `MODEL_TEMPERATURE` | AI creativity (0-2) | 0.5 |
 | `MAX_TOKENS` | Max response length | 10500 |
+| `OPENAI_MODEL` | OpenAI model name | gpt-4.1-nano |
+| `NVIDIA_MODEL` | NVIDIA model name | qwen/qwen3-next-80b-a3b-instruct |
+| `OPEN_ROUTER_CHAT_MODEL` | OpenRouter model name | deepseek/deepseek-v4-flash |
+| `GOOGLE_MODEL` | Google Gemini model name | gemini-2.5-flash |
 | `OLLAMA_BASE_URL` | Ollama server URL (local or external) | http://ollama:11434 |
 | `OLLAMA_MODEL` | Ollama model to use | llama3.2:3b |
 | `REDIS_URL` | Valkey Redis connection string | - |

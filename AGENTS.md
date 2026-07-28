@@ -59,7 +59,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 - **Purpose**: Defines all huey tasks and scheduling logic
 - **Key Pattern**: LLM agent is **lazy-initialized** — `AGENT = None` at module level, `get_agent()` initializes on first use. This prevents the app container (admin panel) from loading the LLM when it only needs to import task functions.
 - **Key Functions**:
-  - `get_agent()`: Lazy-initializes LLM (only in huey container, never in app)
+  - `get_agent()`: Lazy-initializes LLM (only in huey container, never in app). On first init, saves current model config (provider, model, temperature) to Redis key `morning_mailer:model_config` for admin panel display.
   - `load_users()`: Loads active users from Redis first, falls back to users.json
   - `get_user_settings(user)`: Gets per-user max_email_results & days_threshold
   - `should_run_today(user, global_schedule_time, redis_prefix="")`: Checks if user's schedule time has passed today
@@ -80,7 +80,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `huey_fetch_calendar_and_send_both(keyword, days)`: Calendar → both
   - `huey_test_send_email(subject, body)`: Test email
   - `huey_test_send_whatsapp(mobile, message)`: Test WhatsApp
-  - `huey_switch_model(provider, model_name, temperature)`: Switch LLM model inside huey worker. For Ollama, auto-pulls the model via `POST /api/pull` before switching.
+  - `huey_switch_model(provider, model_name, temperature)`: Switch LLM model inside huey worker. For Ollama, auto-pulls the model via `POST /api/pull` before switching. Saves updated model config to Redis for admin panel display.
 
 - **Periodic Tasks**:
   - `daily_summary()`: Unified task — checks all users, processes email and/or WhatsApp per user preference. Also prints startup summary on first run (guarded by `_startup_summary_printed` flag).
@@ -135,6 +135,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
   - `check_task_status(task_id)` — polls huey for task result
   - `get_redis_status()` — Redis connection info
   - `get_scheduler_status()` — Scheduler config from tasks module
+  - `get_current_model()` — Current LLM model config from Redis (provider, model, temperature, updated_at), falls back to `.env` defaults using provider-specific model env vars
   - `generate_oauth_url(keyword)` — Creates Google OAuth URL (uses `client_secret_web.json` first, falls back to `client_secret.json`)
   - `exchange_oauth_code(code, keyword)` — Exchanges auth code for token
   - `enqueue_task(task_func, *args, **kwargs)` — Enqueues a huey task. **IMPORTANT**: Huey 3.0's `TaskWrapper` has no `__name__` — access original function via `task_func.func` to get the name (see `admin/services.py:enqueue_task()`)
@@ -214,7 +215,7 @@ The admin panel (`app`) **never executes heavy work directly**. When a user clic
 |----------|---------|
 | `base.html` | Base layout (navbar, Bootstrap 5, glassmorphism theme). Has `{% block navbar %}` for hiding on login/oauth pages, `{% block body_class %}` for custom body classes, `{% block scripts %}` for page-specific JS |
 | `login.html` | Login page (no navbar, centered card) |
-| `dashboard.html` | Stats cards, quick actions, scheduler config, job status checker, users overview with last run times |
+| `dashboard.html` | Stats cards, quick actions, scheduler config, current model display, job status checker, users overview with last run times |
 | `users.html` | User list with search/sort/filter, bulk selection checkboxes, token expiry badges, history button/modal, OAuth setup/revoke + copy buttons |
 | `user_form.html` | Add/edit user form with section headers, .env SMTP fallback placeholders, checkbox JS fix, summary template textarea, success toast via `?updated=1` |
 | `oauth_redirect.html` | Redirects to Google OAuth. Uses `{{ auth_url | safe }}` in script tag (NOT `{{ auth_url }}` — Jinja2 escapes `&` to `&amp;` which breaks OAuth URLs) |
@@ -624,6 +625,9 @@ There are two distinct OAuth flows:
 |----------|---------|---------|
 | `MODEL_PROVIDER` | LLM provider (nvidia/openai/groq/openrouter/google/ollama) | openrouter |
 | `OPENAI_MODEL` | Model for OpenAI | gpt-4.1-nano |
+| `NVIDIA_MODEL` | Model for NVIDIA | qwen/qwen3-next-80b-a3b-instruct |
+| `OPEN_ROUTER_CHAT_MODEL` | Model for OpenRouter | deepseek/deepseek-v4-flash |
+| `GOOGLE_MODEL` | Model for Google Gemini | gemini-2.5-flash |
 | `MODEL_TEMPERATURE` | LLM creativity | 0.5 |
 | `MAX_TOKENS` | Max response length | 10500 |
 | `OLLAMA_BASE_URL` | Ollama server URL (local or external) | http://ollama:11434 |
@@ -892,3 +896,5 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 26. **Add user redirects, not JSON**: The `POST /users/add` route returns `RedirectResponse(url="/users?created=1", status_code=303)` instead of JSON. The JS form handler in `user_form.html` intercepts the form submit, sends via `fetch()`, and redirects to `/users?created=1` (add mode) or `/users/{keyword}/edit?updated=1` (edit mode). The `users.html` template shows a "User created successfully" toast when `?created=1` is present.
 
 27. **Model switch executes in huey, not app**: `run_switch_model()` in `admin/services.py` enqueues `huey_switch_model` — a huey task that runs inside the **huey worker process**. It does NOT call `tasks.get_agent().hot_switch_model()` directly from the app container (that would only switch the app's unused agent instance). The huey task also auto-pulls Ollama models via `POST /api/pull` before switching when `provider == "ollama"`.
+
+28. **Model config stored in Redis for admin panel**: `get_agent()` (on first init) and `huey_switch_model()` both save current model config (provider, model, temperature, updated_at) to Redis hash `morning_mailer:model_config`. The admin panel reads this via `get_current_model()` to display on the dashboard. Each provider has its own model env var — `OPENAI_MODEL`, `NVIDIA_MODEL`, `OPEN_ROUTER_CHAT_MODEL`, `GOOGLE_MODEL`, `OLLAMA_MODEL` — mapped via a `_model_envs` dict in both `tasks.py:get_agent()` and `tasks.py:huey_switch_model()`. When `model_name` is empty (user left field blank), the switch task resolves the default from the provider's env var before saving to Redis. On huey container restart, `get_agent()` re-saves `.env` defaults to Redis, overwriting any previous admin panel switches.

@@ -38,7 +38,7 @@ def _setup_handler(show_time: bool = True) -> None:
     logger.configure(extra={"name": ""})
 
 
-def get_logger(module_name: str, show_time: bool = True) -> logger:
+def get_logger(module_name: str, show_time: bool = False) -> logger:
     _setup_handler(show_time)
     return logger.bind(name=module_name)
 
