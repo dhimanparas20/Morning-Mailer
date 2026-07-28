@@ -883,7 +883,7 @@ Example: If user has `"schedule_time": "09:00"` but no `max_email_results`, they
 
 22. **Ollama provider skips api_key**: In `modules/agent_utils.py`, the `create_llm()` function skips passing `api_key` to `ChatOllama` — Ollama uses `base_url` instead. The `MODEL_REGISTRY` sets `api_key_env=None` for Ollama, and `create_llm()` conditionally omits `api_key` when `api_key_env is None`. Do NOT pass `api_key=""` to ChatOllama — it may error or attempt a needless auth check.
 
-23. **Ollama auto-pull on container start**: The `ollama` service in `compose.yml` uses an entrypoint script that runs `ollama pull $OLLAMA_MODEL` before starting the server. This means the first `docker compose up -d` will download the model (may take minutes). Subsequent starts use the cached model from the `ollama_data` volume.
+23. **Ollama requires manual model pull**: The `ollama` service in `compose.yml` starts with no models pre-installed. Users must enter the container and run `ollama pull <model>` before first use. The `OLLAMA_MODEL` env var from `.env` is available inside the container for reference. The huey task `huey_switch_model` still auto-pulls models via `POST /api/pull` when switching to Ollama from the admin panel — this is a fallback, not the primary install method.
 
 24. **Mobile number sanitization**: The `_sanitize_mobile()` helper in `admin/routes/user_routes.py` strips spaces, hyphens, and `+` characters, then auto-prepends `"91"` for 10-digit numbers (Indian mobile format). This is applied in both add and edit user routes. The stored format is always `<country code><10 digit number>` with no separators.
 

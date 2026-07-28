@@ -71,7 +71,7 @@ The admin panel **never executes heavy work directly** — it only enqueues huey
 - **Job Status Checker**: Paste a task ID to check its status on the dashboard
 - **Empty Inbox Notifications**: Users still receive an email/WhatsApp notification when no new emails are found — no silent days
 - **Current Date in Prompts**: All LLM prompts include today's IST date via `{CURRENT_DATE}` placeholder — model never guesses the date
-- **Ollama Support**: Run LLMs locally via Ollama (Docker service with auto-pull), no API key required
+- **Ollama Support**: Run LLMs locally via Ollama (Docker service), no API key required
 - **Mobile Number Sanitization**: Auto-strips spaces/hyphens/+, auto-prepends country code 91 for 10-digit Indian numbers
 - **Keyword Sanitization**: Spaces auto-replaced with underscores when creating users
 
@@ -287,7 +287,7 @@ Morning-Mailer/
 | `huey` | `huey` | - | Task queue consumer |
 | `valkey` | `valkey` | 6379 | Redis (task queue + user storage) |
 | `waha` | `waha` | 3000 | WhatsApp HTTP API |
-| `ollama` | `ollama` | 11434 | Local LLM (auto-pulls model on first start) |
+| `ollama` | `ollama` | 11434 | Local LLM (requires manual model install — see below) |
 
 ### Starting Services
 ```bash
@@ -315,6 +315,21 @@ docker compose logs -f huey
 # All services
 docker compose logs -f
 ```
+
+### Installing Ollama Models
+
+The Ollama container starts empty — you must pull models manually before use:
+
+```bash
+# The ollama server is already running inside the container (default CMD)
+# Just exec into it and pull the model
+docker compose exec ollama ollama pull $OLLAMA_MODEL
+
+# Verify installed models
+docker compose exec ollama ollama list
+```
+
+The model name must match `OLLAMA_MODEL` in your `.env` (default: `llama3.2:3b`). The huey worker will also auto-pull the configured model when you switch to Ollama via the admin panel's model switcher.
 
 ## Admin Panel
 
