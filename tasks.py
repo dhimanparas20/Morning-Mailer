@@ -655,7 +655,7 @@ def _process_user_both_channels(
 # Huey Tasks - Individual User Actions (enqueued by admin panel)
 # =============================================================================
 
-@huey.task(retries=2, retry_delay=10)
+@huey.task(retries=2, retry_delay=60)
 def huey_send_email_to_user(keyword: str) -> dict[str, Any]:
     """Fetch, summarize, and send email summary to a specific user."""
     _t0 = time.time()
@@ -676,7 +676,7 @@ def huey_send_email_to_user(keyword: str) -> dict[str, Any]:
     return result
 
 
-@huey.task(retries=2, retry_delay=10)
+@huey.task(retries=2, retry_delay=60)
 def huey_send_whatsapp_to_user(keyword: str) -> dict[str, Any]:
     """Fetch, summarize, and send WhatsApp summary to a specific user."""
     _t0 = time.time()
@@ -806,7 +806,7 @@ def huey_force_whatsapp_all() -> dict[str, Any]:
     return {"processed": len(results), "total_emails_fetched": total_emails, "results": results}
 
 
-@huey.task(retries=2, retry_delay=10)
+@huey.task(retries=2, retry_delay=60)
 def huey_fetch_calendar_and_send_email(keyword: str, days: int = 2) -> dict[str, Any]:
     """Fetch calendar events and send via email to a specific user."""
     _t0 = time.time()
@@ -842,7 +842,7 @@ def huey_fetch_calendar_and_send_email(keyword: str, days: int = 2) -> dict[str,
     return {"keyword": keyword, "events": len(result["events"]), "status": "sent"}
 
 
-@huey.task(retries=2, retry_delay=10)
+@huey.task(retries=2, retry_delay=60)
 def huey_fetch_calendar_and_send_whatsapp(keyword: str, days: int = 2) -> dict[str, Any]:
     """Fetch calendar events and send via WhatsApp to a specific user."""
     _t0 = time.time()
@@ -877,7 +877,7 @@ def huey_fetch_calendar_and_send_whatsapp(keyword: str, days: int = 2) -> dict[s
     return {"keyword": keyword, "events": len(result["events"]), "status": "sent"}
 
 
-@huey.task(retries=2, retry_delay=10)
+@huey.task(retries=2, retry_delay=60)
 def huey_fetch_calendar_and_send_both(keyword: str, days: int = 2) -> dict[str, Any]:
     """Fetch calendar events and send via both email and WhatsApp."""
     _t0 = time.time()

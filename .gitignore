@@ -2,6 +2,7 @@
 .idea
 .venv
 .tok
+.env.prod
 
 # Python
 __pycache__/

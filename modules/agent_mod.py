@@ -1,4 +1,5 @@
 import os
+import time
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from typing import Any, Literal, Optional
@@ -11,6 +12,32 @@ from modules.prompt import SYSTEM_PROMPT
 load_dotenv()
 
 logger = get_logger("[agent]", show_time=False)
+
+# Transient LLM failures (503 overloaded, rate limits, timeouts) — retry with backoff
+_LLM_RETRY_COUNT = int(os.getenv("RETRY_COUNT", 3))
+_LLM_RETRY_DELAY = int(os.getenv("RETRY_DELAY", 60))
+
+_TRANSIENT_MARKERS = (
+    "503",
+    "502",
+    "429",
+    "overloaded",
+    "service unavailable",
+    "rate limit",
+    "too many requests",
+    "timeout",
+    "timed out",
+    "temporarily",
+    "connection reset",
+    "connection refused",
+    "connection error",
+)
+
+
+def _is_transient_llm_error(exc: BaseException) -> bool:
+    """Return True for temporary provider outages that are worth retrying."""
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _TRANSIENT_MARKERS)
 
 
 class AgentModule:
@@ -46,7 +73,11 @@ class AgentModule:
         )
 
     def summarize_emails(self, emails: list[dict[str, Any]], prompt: Optional[str] = None, user_name: Optional[str] = None, calendar_events: Optional[list[dict[str, Any]]] = None) -> str:
-        """Summarize emails (and optionally calendar events) using LLM"""
+        """Summarize emails (and optionally calendar events) using LLM.
+
+        Retries on transient provider errors (503 overloaded, 429 rate limit, timeouts)
+        using RETRY_COUNT / RETRY_DELAY from .env — same knobs as Gmail fetch retries.
+        """
         if self.llm is None:
             self.init()
 
@@ -65,5 +96,30 @@ class AgentModule:
 
         logger.info(f"Summarizing {len(emails)} emails" + (f" + {len(calendar_events)} calendar events" if calendar_events else "") + "...")
 
-        response = self.llm.invoke([HumanMessage(content=user_message)])
-        return response.content
+        last_error: BaseException | None = None
+        for attempt in range(_LLM_RETRY_COUNT):
+            try:
+                response = self.llm.invoke([HumanMessage(content=user_message)])
+                if attempt > 0:
+                    logger.success(f"LLM summarize succeeded on attempt {attempt + 1}/{_LLM_RETRY_COUNT}")
+                return response.content
+            except Exception as e:
+                last_error = e
+                is_last = attempt >= _LLM_RETRY_COUNT - 1
+                if not _is_transient_llm_error(e) or is_last:
+                    if is_last and _is_transient_llm_error(e):
+                        logger.error(
+                            f"LLM still unavailable after {_LLM_RETRY_COUNT} attempts: {e}"
+                        )
+                    raise
+
+                # Linear backoff: delay, 2*delay, 3*delay — gives overloaded providers time to recover
+                wait = _LLM_RETRY_DELAY * (attempt + 1)
+                logger.warning(
+                    f"LLM temporarily unavailable (attempt {attempt + 1}/{_LLM_RETRY_COUNT}): {e}. "
+                    f"Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+
+        # Unreachable, but keeps type-checkers happy
+        raise last_error  # type: ignore[misc]
